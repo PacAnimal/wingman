@@ -1,0 +1,34 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <UseWPF>true</UseWPF>
+        <UseRidGraph>true</UseRidGraph>
+        <PlatformTarget>x64</PlatformTarget>
+        <RuntimeIdentifier>win10-x64</RuntimeIdentifier>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
+      <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+      <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Cathedral" Version="0.0.403" />
+      <!-- GeneratePathProperty gives us $(PkgCI_Microsoft_Windows_Console_ConPTY) for manual import below.
+           The package's .targets file is misnamed (missing the CI. prefix) so NuGet never auto-imports it. -->
+      <PackageReference Include="CI.Microsoft.Windows.Console.ConPTY" Version="1.22.250314001" GeneratePathProperty="true" />
+      <PackageReference Include="EasyWindowsTerminalControl" Version="*" />
+    </ItemGroup>
+
+    <!-- fix: manually import the misnamed ConPTY build files -->
+    <Import Project="$(PkgCI_Microsoft_Windows_Console_ConPTY)\build\Microsoft.Windows.Console.ConPTY.props" />
+    <Import Project="$(PkgCI_Microsoft_Windows_Console_ConPTY)\build\Microsoft.Windows.Console.ConPTY.targets" />
+
+</Project>

@@ -1,0 +1,16 @@
+<Window x:Class="Wingman.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:term="clr-namespace:EasyWindowsTerminalControl;assembly=EasyWindowsTerminalControl"
+        mc:Ignorable="d"
+        Title="Wingman" Height="600" Width="900"
+        Background="#1E1E1E" Padding="0">
+    <Grid>
+        <term:EasyTerminalControl x:Name="Terminal"
+            StartupCommandLine="pwsh.exe -NoProfile"
+            Win32InputMode="True"
+            InputCapture="TabKey,DirectionKeys" />
+    </Grid>
+</Window>
