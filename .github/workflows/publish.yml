@@ -26,7 +26,7 @@ jobs:
           $files = Get-ChildItem -Path $publishDir -File
           Write-Host "Publish directory contents:"
           $files | ForEach-Object { Write-Host "  $($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" }
-          $names = $files | ForEach-Object { $_.Name }
+          $names = @($files | ForEach-Object { $_.Name })
           if ($names.Count -ne 1 -or $names[0] -ne "Wingman.exe") {
             Write-Error "Expected only Wingman.exe, found: $($names -join ', ')"
             exit 1
