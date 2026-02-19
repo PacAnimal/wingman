@@ -28,11 +28,24 @@ public partial class ChatPanel : UserControl
         MessagesPanel.Children.Clear();
     }
 
-    private void SendButton_Click(object sender, RoutedEventArgs e) => _ = SendMessage();
+    public TextBox InputTextBox => InputBox;
 
-    private void InputBox_KeyDown(object sender, KeyEventArgs e)
+    private void InputBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Enter || (Keyboard.Modifiers & ModifierKeys.Shift) != 0) return;
+        if (e.Key != Key.Enter) return;
+
+        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0) return; // TextBox handles shift+enter natively
+
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            // TextBox doesn't handle ctrl+enter natively — insert newline manually
+            var idx = InputBox.CaretIndex;
+            InputBox.Text = InputBox.Text.Insert(idx, "\r\n");
+            InputBox.CaretIndex = idx + 2;
+            e.Handled = true;
+            return;
+        }
+
         e.Handled = true;
         _ = SendMessage();
     }
@@ -46,7 +59,6 @@ public partial class ChatPanel : UserControl
 
         InputBox.Text = "";
         _isStreaming = true;
-        SendButton.IsEnabled = false;
 
         AddBubble(userText, isUser: true);
         var assistantBlock = AddBubble("", isUser: false);
@@ -67,7 +79,6 @@ public partial class ChatPanel : UserControl
         finally
         {
             _isStreaming = false;
-            SendButton.IsEnabled = true;
         }
     }
 

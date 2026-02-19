@@ -14,9 +14,16 @@
                        Foreground="#CCCCCC" FontSize="13" FontWeight="SemiBold" />
             <Button x:Name="ClearButton" Content="Clear" HorizontalAlignment="Right"
                     VerticalAlignment="Center" Margin="0,0,8,0"
-                    Background="Transparent" Foreground="#AAAAAA"
-                    BorderThickness="0" Cursor="Hand" Padding="6,3"
-                    Click="ClearButton_Click" />
+                    Foreground="#AAAAAA" Cursor="Hand" Padding="6,3"
+                    Click="ClearButton_Click">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
         </Grid>
 
         <!-- messages -->
@@ -28,27 +35,15 @@
 
         <!-- input -->
         <Border Grid.Row="2" Background="#252526" Padding="8">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBox x:Name="InputBox" Grid.Column="0"
-                         AcceptsReturn="True" TextWrapping="Wrap"
-                         MaxHeight="120" MinHeight="32"
-                         Background="#3C3C3C" Foreground="#CCCCCC"
-                         CaretBrush="#CCCCCC" SelectionBrush="#0E639C"
-                         BorderThickness="0" Padding="6,4"
-                         VerticalScrollBarVisibility="Auto"
-                         FontFamily="Consolas" FontSize="13"
-                         KeyDown="InputBox_KeyDown" />
-                <Button x:Name="SendButton" Grid.Column="1"
-                        Content="Send" Margin="8,0,0,0"
-                        Width="60" Height="32"
-                        Background="#0E639C" Foreground="White"
-                        BorderThickness="0" Cursor="Hand"
-                        Click="SendButton_Click" />
-            </Grid>
+            <TextBox x:Name="InputBox"
+                     AcceptsReturn="True" TextWrapping="Wrap"
+                     MaxHeight="120" MinHeight="24"
+                     Background="#3C3C3C" Foreground="#CCCCCC"
+                     CaretBrush="#CCCCCC" SelectionBrush="#0E639C"
+                     BorderThickness="0" Padding="6,4"
+                     VerticalScrollBarVisibility="Auto"
+                     FontFamily="Consolas" FontSize="13"
+                     PreviewKeyDown="InputBox_PreviewKeyDown" />
         </Border>
 
         <!-- disabled overlay when no API key -->

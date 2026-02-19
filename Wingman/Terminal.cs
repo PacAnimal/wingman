@@ -131,6 +131,8 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
 
     private void WriteCommand(string command)
     {
+        // escape clears any partially-typed user input before injecting
+        _term!.WriteToTerm("\x1b");
         foreach (var c in command.SaneSplit('\r', '\n'))
         {
             _term!.WriteToTerm(c + '\r');

@@ -21,12 +21,13 @@
                       HorizontalAlignment="Stretch"
                       Background="#333333" />
 
-        <Border Grid.Column="2" Background="Black">
+        <Border Grid.Column="2" Background="#0C0C0C">
             <term:EasyTerminalControl x:Name="Terminal"
                 Margin="8,0,0,0"
                 StartupCommandLine="pwsh.exe -NoProfile"
                 Win32InputMode="True"
-                InputCapture="TabKey,DirectionKeys" />
+                InputCapture="TabKey,DirectionKeys"
+                FontSizeWhenSettingTheme="11" />
         </Border>
     </Grid>
 </Window>

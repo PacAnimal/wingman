@@ -14,12 +14,36 @@ public interface IWindowsNative
 {
     bool ProbeConPTY();
     bool IsCtrlCKeyDown(ref MSG msg);
+    void EnableDarkTitleBar(IntPtr hwnd);
+    void AddAlwaysOnTopMenu(IntPtr hwnd);
+    void ToggleAlwaysOnTopCheck(IntPtr hwnd, bool isChecked);
 }
 
-public class WindowsNative : IWindowsNative
+public partial class WindowsNative : IWindowsNative
 {
     private const int WM_KEYDOWN = 0x0100;
     private const int VK_C = 0x43;
+
+    // system menu
+    private const uint MF_STRING = 0x00000000;
+    private const uint MF_SEPARATOR = 0x00000800;
+    private const uint MF_BYCOMMAND = 0x00000000;
+    private const uint MF_CHECKED = 0x00000008;
+    private const uint MF_UNCHECKED = 0x00000000;
+    internal const uint WM_SYSCOMMAND_ALWAYS_ON_TOP = 0x1000;
+
+    [LibraryImport("user32.dll")]
+    private static partial IntPtr GetSystemMenu(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool bRevert);
+
+    [LibraryImport("user32.dll", EntryPoint = "AppendMenuW", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool AppendMenu(IntPtr hMenu, uint uFlags, uint uIDNewItem, string? lpNewItem);
+
+    [LibraryImport("user32.dll")]
+    private static partial uint CheckMenuItem(IntPtr hMenu, uint uIDCheckItem, uint uCheck);
+
+    [LibraryImport("dwmapi.dll")]
+    private static partial int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
     public bool ProbeConPTY()
     {
@@ -37,6 +61,25 @@ public class WindowsNative : IWindowsNative
         if (msg.message != WM_KEYDOWN || (int)msg.wParam != VK_C) return false;
         if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return false;
         return true;
+    }
+
+    public void EnableDarkTitleBar(IntPtr hwnd)
+    {
+        var value = 1;
+        DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, ref value, sizeof(int));
+    }
+
+    public void AddAlwaysOnTopMenu(IntPtr hwnd)
+    {
+        var menu = GetSystemMenu(hwnd, false);
+        AppendMenu(menu, MF_SEPARATOR, 0, null);
+        AppendMenu(menu, MF_STRING, WM_SYSCOMMAND_ALWAYS_ON_TOP, "Always on Top");
+    }
+
+    public void ToggleAlwaysOnTopCheck(IntPtr hwnd, bool isChecked)
+    {
+        var menu = GetSystemMenu(hwnd, false);
+        _ = CheckMenuItem(menu, WM_SYSCOMMAND_ALWAYS_ON_TOP, MF_BYCOMMAND | (isChecked ? MF_CHECKED : MF_UNCHECKED));
     }
 }
 
