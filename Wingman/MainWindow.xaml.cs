@@ -30,43 +30,60 @@ public partial class MainWindow : Window
         ComponentDispatcher.ThreadPreprocessMessage += OnThreadPreprocessMessage;
         Closed += (_, _) => ComponentDispatcher.ThreadPreprocessMessage -= OnThreadPreprocessMessage;
 
-        Terminal.ConPTYTerm.TermReady += (sender, _) =>
+        // detach library's Term_TermReady and null ConPTYTerm so Terminal_Loaded's StartTerm()
+        // sees null → returns early, preventing the default (no-window) factory from racing us
+        var conPTY = Terminal.DisconnectConPTYTerm();
+
+        // signal: native HWND exists (BuildWindowCore has run before Loaded fires)
+        var hwndReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Terminal.Terminal.Loaded += (_, _) => hwndReady.TrySetResult();
+
+        // set interceptor BEFORE start so no output is missed
+        conPTY.InterceptOutputToUITerminal = (ref Span<char> str) =>
         {
-            if (sender is not EasyWindowsTerminalControl.TermPTY term) return;
-            _term = term;
-
-            term.InterceptOutputToUITerminal = (ref Span<char> str) =>
+            var text = EasyWindowsTerminalControl.TermPTY.StripColors(str.ToString());
+            _termStarted.TrySetResult();
+            _outputBuffer.Append(text);
+            var pos = 0;
+            while ((pos = text.IndexOf(_sentinel, pos, StringComparison.Ordinal)) >= 0)
             {
-                var text = EasyWindowsTerminalControl.TermPTY.StripColors(str.ToString());
-                _termStarted.TrySetResult();
-                _outputBuffer.Append(text);
-                var pos = 0;
-                while ((pos = text.IndexOf(_sentinel, pos, StringComparison.Ordinal)) >= 0)
-                {
-                    _sentinels.Writer.TryWrite(true);
-                    pos += _sentinel.Length;
-                }
-            };
+                _sentinels.Writer.TryWrite(true);
+                pos += _sentinel.Length;
+            }
+        };
 
-            Task.Run(() => { term.Process?.WaitForExit(); Dispatcher.BeginInvoke(Close); });
+        conPTY.TermReady += (_, _) =>
+        {
+            _term = conPTY;
 
+            // block until HWND is ready — Start() can't reach ReadOutputLoop() until we return
+            hwndReady.Task.Wait();
+
+            // re-attach to display: OnTermChanged sees TermProcIsStarted=true → calls Term_TermReady
+            // immediately (inline on UI thread) → sets Terminal.Connection before ReadOutputLoop reads
+            Dispatcher.Invoke(() => Terminal.ConPTYTerm = conPTY);
+
+            Task.Run(() => { conPTY.Process?.WaitForExit(); Dispatcher.BeginInvoke(Close); });
             Task.Run(async () =>
             {
                 await _termStarted.Task;
                 // store sentinel in a ps variable so the literal guid never appears in the command
                 // text — prevents the PSReadLine echo from triggering our intercept early
                 var spaces = new string(' ', _sentinel.Length);
-                term.WriteToTerm("Set-PSReadLineOption -HistorySaveStyle SaveNothing\r");
-                term.WriteToTerm($"$wm_sentinel='{rawGuid}'\r");
-                term.WriteToTerm(
+                conPTY.WriteToTerm("Set-PSReadLineOption -HistorySaveStyle SaveNothing\r");
+                conPTY.WriteToTerm($"$wm_sentinel='{rawGuid}'\r");
+                conPTY.WriteToTerm(
                     $"function prompt {{ Write-Host \"`e[30m<<$wm_sentinel>>`e[0m`r{spaces}`r\" -NoNewline; " +
                     "\"PS $($executionContext.SessionState.Path.CurrentLocation)> \" }\r");
-                term.WriteToTerm("[Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory(); clear; Write-Host \"`nWingman ready!`n\" -ForegroundColor Green\r");
+                conPTY.WriteToTerm("[Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory(); clear; Write-Host \"`nWingman ready!`n\" -ForegroundColor Green\r");
 
                 var result = await RunCommand("dir");
                 File.WriteAllText(@"C:\temp\wingman.log", result);
             });
         };
+
+        // sole caller of Start — no race, no try-catch needed
+        Task.Run(() => conPTY.Start("pwsh.exe -NoProfile", 80, 30));
     }
 
     private void OnThreadPreprocessMessage(ref MSG msg, ref bool handled)

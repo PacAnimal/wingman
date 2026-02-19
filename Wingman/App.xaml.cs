@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -5,8 +6,12 @@ namespace Wingman;
 
 public partial class App : Application
 {
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool FreeConsole();
+
     protected override void OnStartup(StartupEventArgs e)
     {
+        FreeConsole();
         base.OnStartup(e);
 
         // catch fire-and-forget Task.Run exceptions from the terminal library
