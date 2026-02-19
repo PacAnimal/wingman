@@ -1,13 +1,10 @@
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Channels;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Interop;
 using Cathedral.Extensions;
-using EasyWindowsTerminalControl.Internals;
 using Microsoft.Extensions.Logging;
 
 namespace Wingman;
@@ -18,6 +15,7 @@ public partial class MainWindow : Window
         .Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Debug))
         .CreateLogger<MainWindow>();
 
+    private readonly IWindowsNative _native = new WindowsNative();
     private readonly StringBuilder _outputBuffer = new();
     private readonly Channel<bool> _sentinels = Channel.CreateUnbounded<bool>();
     private readonly TaskCompletionSource _termStarted = new();
@@ -30,7 +28,10 @@ public partial class MainWindow : Window
         // delimiters only added by powershell at output time — raw guid in variable assignment
         var rawGuid = Guid.NewGuid().ToString();
         _sentinel = $"<<{rawGuid}>>";
-        ProbeNativeDeps();
+
+        if (!_native.ProbeConPTY())
+            MessageBox.Show("FAILED to load conpty.dll — ConPTY will not work.",
+                "Missing Native DLL", MessageBoxButton.OK, MessageBoxImage.Error);
 
         // intercept ctrl+c before WM_KEYDOWN reaches the native terminal hwnd — selection is still
         // active at this point; by the time InterceptInputToTermApp fires it's already cleared
@@ -46,7 +47,7 @@ public partial class MainWindow : Window
         Terminal.Terminal.Loaded += (_, _) => hwndReady.TrySetResult();
 
         // set interceptor BEFORE start so no output is missed
-        conPTY.InterceptOutputToUITerminal = (ref Span<char> str) =>
+        conPTY.InterceptOutputToUITerminal = (ref str) =>
         {
             var text = EasyWindowsTerminalControl.TermPTY.StripColors(str.ToString());
             _termStarted.TrySetResult();
@@ -93,47 +94,9 @@ public partial class MainWindow : Window
         Task.Run(() => conPTY.Start("pwsh.exe -NoProfile", 80, 30, factory: new DetachedProcessFactory()));
     }
 
-    // prevents rider/vs debugger from stealing child process output by clearing the parent's
-    // redirected std handles right before CreateProcess — windows auto-duplicates these to
-    // child console apps (even with bInheritHandles=false + conpty) per microsoft/terminal#11276
-    private class DetachedProcessFactory : IProcessFactory
-    {
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool FreeConsole();
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern IntPtr GetStdHandle(int nStdHandle);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool SetStdHandle(int nStdHandle, IntPtr hHandle);
-
-        public IProcess Start(string command, nuint attributes, PseudoConsole console)
-        {
-            FreeConsole();
-            // null handles so windows won't auto-duplicate them into the child; restore after
-            // CreateProcess so Console.WriteLine / ILogger still work in the parent
-            var origIn  = GetStdHandle(-10);
-            var origOut = GetStdHandle(-11);
-            var origErr = GetStdHandle(-12);
-            SetStdHandle(-10, IntPtr.Zero);
-            SetStdHandle(-11, IntPtr.Zero);
-            SetStdHandle(-12, IntPtr.Zero);
-            try     { return ProcessFactory.Start(command, attributes, console); }
-            finally
-            {
-                SetStdHandle(-10, origIn);
-                SetStdHandle(-11, origOut);
-                SetStdHandle(-12, origErr);
-            }
-        }
-    }
-
     private void OnThreadPreprocessMessage(ref MSG msg, ref bool handled)
     {
-        const int WM_KEYDOWN = 0x0100;
-        const int VK_C = 0x43;
-        if (msg.message != WM_KEYDOWN || (int)msg.wParam != VK_C) return;
-        if ((Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
+        if (!_native.IsCtrlCKeyDown(ref msg)) return;
 
         var selected = Terminal.Terminal.GetSelectedText();
         if (string.IsNullOrEmpty(selected)) return;
@@ -174,20 +137,5 @@ public partial class MainWindow : Window
     {
         using var cts = new CancellationTokenSource(timeoutMs);
         await _sentinels.Reader.ReadAsync(cts.Token);
-    }
-
-    private void ProbeNativeDeps()
-    {
-        // verify conpty.dll loads from the right place
-        if (NativeLibrary.TryLoad("conpty", out var handle))
-        {
-            Debug.WriteLine("conpty.dll loaded OK");
-            NativeLibrary.Free(handle);
-        }
-        else
-        {
-            MessageBox.Show("FAILED to load conpty.dll — ConPTY will not work.",
-                "Missing Native DLL", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
     }
 }
