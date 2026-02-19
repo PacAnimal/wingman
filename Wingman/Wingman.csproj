@@ -21,6 +21,7 @@
 
     <ItemGroup>
       <PackageReference Include="Cathedral" Version="0.0.403" />
+      <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="*" />
       <!-- GeneratePathProperty gives us $(PkgCI_Microsoft_Windows_Console_ConPTY) for manual import below.
            The package's .targets file is misnamed (missing the CI. prefix) so NuGet never auto-imports it. -->
       <PackageReference Include="CI.Microsoft.Windows.Console.ConPTY" Version="1.22.250314001" GeneratePathProperty="true" />

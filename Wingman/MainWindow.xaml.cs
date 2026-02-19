@@ -6,11 +6,18 @@ using System.Threading.Channels;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
+using Cathedral.Extensions;
+using EasyWindowsTerminalControl.Internals;
+using Microsoft.Extensions.Logging;
 
 namespace Wingman;
 
 public partial class MainWindow : Window
 {
+    private static readonly ILogger<MainWindow> _log = LoggerFactory
+        .Create(b => b.AddConsole().SetMinimumLevel(LogLevel.Debug))
+        .CreateLogger<MainWindow>();
+
     private readonly StringBuilder _outputBuffer = new();
     private readonly Channel<bool> _sentinels = Channel.CreateUnbounded<bool>();
     private readonly TaskCompletionSource _termStarted = new();
@@ -83,7 +90,42 @@ public partial class MainWindow : Window
         };
 
         // sole caller of Start — no race, no try-catch needed
-        Task.Run(() => conPTY.Start("pwsh.exe -NoProfile", 80, 30));
+        Task.Run(() => conPTY.Start("pwsh.exe -NoProfile", 80, 30, factory: new DetachedProcessFactory()));
+    }
+
+    // prevents rider/vs debugger from stealing child process output by clearing the parent's
+    // redirected std handles right before CreateProcess — windows auto-duplicates these to
+    // child console apps (even with bInheritHandles=false + conpty) per microsoft/terminal#11276
+    private class DetachedProcessFactory : IProcessFactory
+    {
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool FreeConsole();
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr GetStdHandle(int nStdHandle);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetStdHandle(int nStdHandle, IntPtr hHandle);
+
+        public IProcess Start(string command, nuint attributes, PseudoConsole console)
+        {
+            FreeConsole();
+            // null handles so windows won't auto-duplicate them into the child; restore after
+            // CreateProcess so Console.WriteLine / ILogger still work in the parent
+            var origIn  = GetStdHandle(-10);
+            var origOut = GetStdHandle(-11);
+            var origErr = GetStdHandle(-12);
+            SetStdHandle(-10, IntPtr.Zero);
+            SetStdHandle(-11, IntPtr.Zero);
+            SetStdHandle(-12, IntPtr.Zero);
+            try     { return ProcessFactory.Start(command, attributes, console); }
+            finally
+            {
+                SetStdHandle(-10, origIn);
+                SetStdHandle(-11, origOut);
+                SetStdHandle(-12, origErr);
+            }
+        }
     }
 
     private void OnThreadPreprocessMessage(ref MSG msg, ref bool handled)
@@ -108,11 +150,12 @@ public partial class MainWindow : Window
         await WaitForSentinel(timeoutMs);
         var offset = _outputBuffer.Length;
 
+        var sw = Stopwatch.StartNew();
         _term.WriteToTerm(command + "\r");
 
         // wait for sentinel from prompt after command finishes
         await WaitForSentinel(timeoutMs);
-        var endIdx = _outputBuffer.ToString().LastIndexOf(_sentinel);
+        var endIdx = _outputBuffer.ToString().LastIndexOfOrdinal(_sentinel);
 
         var output = _outputBuffer.ToString()[offset..endIdx];
 
@@ -120,6 +163,9 @@ public partial class MainWindow : Window
         var firstNewline = output.IndexOf('\n');
         if (firstNewline >= 0)
             output = output[(firstNewline + 1)..];
+
+        var elapsed = (int)sw.ElapsedMilliseconds;
+        _log.LogInformation("Command executed in {Elapsed}ms: {Command}", elapsed, command);
 
         return output.Trim();
     }
