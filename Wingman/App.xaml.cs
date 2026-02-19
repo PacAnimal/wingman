@@ -44,15 +44,29 @@ public partial class App : Application
                 services.AddSereneConsoleLogging();
                 services.AddSingleton<IWindowsNative, WindowsNative>();
                 services.AddSingleton<ITerminal, Terminal>();
-                services.AddSingleton<IAgentTool, RunCommandTool>();
 
                 // AI chat: only wire up if API key is configured
                 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
                 if (!string.IsNullOrEmpty(apiKey))
                 {
+                    var openAiClient = new OpenAIClient(apiKey);
+
+                    // conversation client (gpt-4o) with function invocation middleware
                     services.AddChatClient(
-                            new OpenAIClient(apiKey).GetChatClient("gpt-4o").AsIChatClient())
+                            openAiClient.GetChatClient("gpt-4o").AsIChatClient())
                         .UseFunctionInvocation();
+
+                    // guard client (gpt-4o-mini) — registered directly, not as IChatClient
+                    var guardClient = openAiClient.GetChatClient("gpt-4o-mini").AsIChatClient();
+                    services.AddSingleton<ICommandGuard>(sp =>
+                        new CommandGuard(guardClient, sp.GetRequiredService<ILogger<CommandGuard>>()));
+
+                    // approval UI — depends on MainWindow.ChatPanel; use Lazy<> to break circular dep
+                    services.AddSingleton<IApprovalUI>(sp =>
+                        new ApprovalUI(sp.GetRequiredService<MainWindow>().ChatPanel));
+                    services.AddSingleton(sp => new Lazy<IApprovalUI>(() => sp.GetRequiredService<IApprovalUI>()));
+
+                    services.AddSingleton<IAgentTool, RunCommandTool>();
                     services.AddSingleton<IChatService, ChatService>();
                 }
 

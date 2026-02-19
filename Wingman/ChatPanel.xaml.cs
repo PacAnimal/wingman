@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace Wingman;
 
@@ -9,10 +10,13 @@ public partial class ChatPanel : UserControl
 {
     private IChatService? _chatService;
     private bool _isStreaming;
+    private TaskCompletionSource<bool>? _pendingApproval;
+    private Action<bool>? _pendingApprovalCallback;
 
     public ChatPanel()
     {
         InitializeComponent();
+        InputBox.LostFocus += (_, _) => { if (_pendingApproval != null) ResolveApproval(false); };
     }
 
     public void Initialize(IChatService? chatService)
@@ -20,6 +24,22 @@ public partial class ChatPanel : UserControl
         _chatService = chatService;
         if (chatService == null)
             DisabledOverlay.Visibility = Visibility.Visible;
+    }
+
+    public void SetPendingApproval(TaskCompletionSource<bool> tcs, Action<bool> onResolved)
+    {
+        _pendingApproval = tcs;
+        _pendingApprovalCallback = onResolved;
+    }
+
+    private void ResolveApproval(bool accept)
+    {
+        var tcs = _pendingApproval;
+        var cb = _pendingApprovalCallback;
+        _pendingApproval = null;
+        _pendingApprovalCallback = null;
+        cb?.Invoke(accept);
+        tcs?.TrySetResult(accept);
     }
 
     private void ClearButton_Click(object sender, RoutedEventArgs e)
@@ -32,23 +52,47 @@ public partial class ChatPanel : UserControl
 
     private void InputBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Enter) return;
-
-        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0) return; // TextBox handles shift+enter natively
-
-        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        if (e.Key == Key.Enter)
         {
-            // TextBox doesn't handle ctrl+enter natively — insert newline manually
-            var idx = InputBox.CaretIndex;
-            InputBox.Text = InputBox.Text.Insert(idx, "\r\n");
-            InputBox.CaretIndex = idx + 2;
+            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+            {
+                // Shift+Enter: accept pending or do nothing
+                if (_pendingApproval != null)
+                    ResolveApproval(true);
+                e.Handled = true;
+                return;
+            }
+
+            if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+            {
+                // ctrl+enter: reject pending if any, then insert newline
+                if (_pendingApproval != null)
+                    ResolveApproval(false);
+                var idx = InputBox.CaretIndex;
+                InputBox.Text = InputBox.Text.Insert(idx, "\r\n");
+                InputBox.CaretIndex = idx + 2;
+                e.Handled = true;
+                return;
+            }
+
+            // plain enter: reject pending if any, then send
+            if (_pendingApproval != null)
+                ResolveApproval(false);
             e.Handled = true;
+            _ = SendMessage();
             return;
         }
 
-        e.Handled = true;
-        _ = SendMessage();
+        // any non-enter key rejects pending (ignore standalone modifier keys)
+        if (_pendingApproval != null && !IsModifierKey(e.Key))
+            ResolveApproval(false);
     }
+
+    private static bool IsModifierKey(Key key) => key is
+        Key.LeftShift or Key.RightShift or
+        Key.LeftCtrl or Key.RightCtrl or
+        Key.LeftAlt or Key.RightAlt or
+        Key.System or Key.LWin or Key.RWin or Key.CapsLock;
 
     private async Task SendMessage()
     {
@@ -63,21 +107,40 @@ public partial class ChatPanel : UserControl
         AddBubble(userText, isUser: true);
         var assistantBlock = AddBubble("", isUser: false);
 
+        // cycling dots while waiting for first token
+        var dotCount = 0;
+        var typingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        typingTimer.Tick += (_, _) =>
+        {
+            dotCount = dotCount % 3 + 1;
+            assistantBlock.Text = new string('.', dotCount);
+        };
+        typingTimer.Start();
+
         try
         {
+            var hasContent = false;
             await foreach (var chunk in _chatService.SendMessageAsync(userText))
             {
+                if (!hasContent)
+                {
+                    typingTimer.Stop();
+                    assistantBlock.Text = "";
+                    hasContent = true;
+                }
                 assistantBlock.Text += chunk;
                 ScrollToBottom();
             }
         }
         catch (Exception ex)
         {
-            assistantBlock.Text += $"\n[Error: {ex.Message}]";
+            typingTimer.Stop();
+            assistantBlock.Text = $"[Error: {ex.Message}]";
             assistantBlock.Foreground = Brushes.IndianRed;
         }
         finally
         {
+            typingTimer.Stop();
             _isStreaming = false;
         }
     }
@@ -107,6 +170,14 @@ public partial class ChatPanel : UserControl
         ScrollToBottom();
         return textBlock;
     }
+
+    public void InsertElement(UIElement element)
+    {
+        MessagesPanel.Children.Add(element);
+        ScrollToBottom();
+    }
+
+    public void RemoveElement(UIElement element) => MessagesPanel.Children.Remove(element);
 
     private void ScrollToBottom() => MessagesScrollViewer.ScrollToEnd();
 }
