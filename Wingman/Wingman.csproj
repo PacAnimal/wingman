@@ -44,7 +44,7 @@
     <Target Name="CleanPublishOutput" AfterTargets="ComputeFilesToPublish">
         <ItemGroup>
             <!-- terminal control ships its own pdb; OpenConsole.exe is not needed (we use conpty.dll directly) -->
-            <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'Microsoft.Terminal.Control.pdb'" />
+            <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
             <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'OpenConsole'" />
         </ItemGroup>
     </Target>
