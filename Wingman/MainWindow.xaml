@@ -21,7 +21,8 @@
                       HorizontalAlignment="Stretch"
                       Background="#333333" />
 
-        <Border Grid.Column="2" Background="#0C0C0C">
+        <Border x:Name="TerminalBorder" Grid.Column="2" Background="#0C0C0C"
+                BorderThickness="1" BorderBrush="Transparent">
             <term:EasyTerminalControl x:Name="Terminal"
                 Margin="8,0,0,0"
                 StartupCommandLine="pwsh.exe -NoProfile"

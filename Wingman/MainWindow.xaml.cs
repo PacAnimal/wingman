@@ -10,6 +10,8 @@ namespace Wingman;
 
 public partial class MainWindow
 {
+    private static readonly SolidColorBrush FocusBorderBrush = new(Color.FromRgb(0x4A, 0x67, 0x85));
+
     private readonly ILogger<MainWindow> _log;
     private readonly IWindowsNative _native;
     private readonly ITerminal _terminal;
@@ -39,9 +41,17 @@ public partial class MainWindow
         SourceInitialized += OnSourceInitialized;
         Loaded += (_, _) => ChatPanel.InputTextBox.Focus();
 
-        // hide terminal cursor when focus is elsewhere
-        Terminal.GotFocus += (_, _) => Terminal.IsCursorVisible = true;
-        Terminal.LostFocus += (_, _) => Terminal.IsCursorVisible = false;
+        // cursor visibility + focus outline for terminal
+        Terminal.GotFocus += (_, _) =>
+        {
+            Terminal.IsCursorVisible = true;
+            TerminalBorder.BorderBrush = FocusBorderBrush;
+        };
+        Terminal.LostFocus += (_, _) =>
+        {
+            Terminal.IsCursorVisible = false;
+            TerminalBorder.BorderBrush = Brushes.Transparent;
+        };
 
         // Init() must run synchronously here (UI thread) so DisconnectConPTYTerm() happens
         // before Show() → Loaded fires — otherwise the control races us with the default factory

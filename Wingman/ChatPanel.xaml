@@ -40,10 +40,22 @@
                      MaxHeight="120" MinHeight="24"
                      Background="#3C3C3C" Foreground="#CCCCCC"
                      CaretBrush="#CCCCCC" SelectionBrush="#0E639C"
-                     BorderThickness="0" Padding="6,4"
+                     FocusVisualStyle="{x:Null}" Padding="6,4"
                      VerticalScrollBarVisibility="Auto"
                      FontFamily="Consolas" FontSize="13"
-                     PreviewKeyDown="InputBox_PreviewKeyDown" />
+                     PreviewKeyDown="InputBox_PreviewKeyDown">
+                <TextBox.Style>
+                    <Style TargetType="TextBox">
+                        <Setter Property="BorderThickness" Value="1" />
+                        <Setter Property="BorderBrush" Value="Transparent" />
+                        <Style.Triggers>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter Property="BorderBrush" Value="#4A6785" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBox.Style>
+            </TextBox>
         </Border>
 
         <!-- disabled overlay when no API key -->
