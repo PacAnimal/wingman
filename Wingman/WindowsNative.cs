@@ -23,10 +23,9 @@ public class WindowsNative : IWindowsNative
 
     public bool ProbeConPTY()
     {
-        // verify conpty.dll loads from the right place
-        if (NativeLibrary.TryLoad("conpty", out var handle))
+        // pass the assembly so single-file apps search the extraction temp dir via the runtime's native resolver
+        if (NativeLibrary.TryLoad("conpty", typeof(WindowsNative).Assembly, null, out var handle))
         {
-            System.Diagnostics.Debug.WriteLine("conpty.dll loaded OK");
             NativeLibrary.Free(handle);
             return true;
         }

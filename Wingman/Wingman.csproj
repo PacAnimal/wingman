@@ -20,6 +20,14 @@
       <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     </PropertyGroup>
 
+    <PropertyGroup>
+        <SelfContained>true</SelfContained>
+        <PublishSingleFile>true</PublishSingleFile>
+        <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+        <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+        <PublishReadyToRun>true</PublishReadyToRun>
+    </PropertyGroup>
+
     <ItemGroup>
       <PackageReference Include="Cathedral" Version="0.0.403" />
       <PackageReference Include="Microsoft.Extensions.Hosting" Version="*" />
@@ -32,5 +40,13 @@
     <!-- fix: manually import the misnamed ConPTY build files -->
     <Import Project="$(PkgCI_Microsoft_Windows_Console_ConPTY)\build\Microsoft.Windows.Console.ConPTY.props" />
     <Import Project="$(PkgCI_Microsoft_Windows_Console_ConPTY)\build\Microsoft.Windows.Console.ConPTY.targets" />
+
+    <Target Name="CleanPublishOutput" AfterTargets="ComputeFilesToPublish">
+        <ItemGroup>
+            <!-- terminal control ships its own pdb; OpenConsole.exe is not needed (we use conpty.dll directly) -->
+            <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+            <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'OpenConsole'" />
+        </ItemGroup>
+    </Target>
 
 </Project>
