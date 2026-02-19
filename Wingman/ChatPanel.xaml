@@ -1,0 +1,64 @@
+<UserControl x:Class="Wingman.ChatPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Background="#1E1E1E">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="36" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- header -->
+        <Grid Grid.Row="0" Background="#252526">
+            <TextBlock Text="Wingman AI" VerticalAlignment="Center" Margin="12,0,0,0"
+                       Foreground="#CCCCCC" FontSize="13" FontWeight="SemiBold" />
+            <Button x:Name="ClearButton" Content="Clear" HorizontalAlignment="Right"
+                    VerticalAlignment="Center" Margin="0,0,8,0"
+                    Background="Transparent" Foreground="#AAAAAA"
+                    BorderThickness="0" Cursor="Hand" Padding="6,3"
+                    Click="ClearButton_Click" />
+        </Grid>
+
+        <!-- messages -->
+        <ScrollViewer Grid.Row="1" x:Name="MessagesScrollViewer"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel x:Name="MessagesPanel" Margin="0,4,0,4" />
+        </ScrollViewer>
+
+        <!-- input -->
+        <Border Grid.Row="2" Background="#252526" Padding="8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="InputBox" Grid.Column="0"
+                         AcceptsReturn="True" TextWrapping="Wrap"
+                         MaxHeight="120" MinHeight="32"
+                         Background="#3C3C3C" Foreground="#CCCCCC"
+                         CaretBrush="#CCCCCC" SelectionBrush="#0E639C"
+                         BorderThickness="0" Padding="6,4"
+                         VerticalScrollBarVisibility="Auto"
+                         FontFamily="Consolas" FontSize="13"
+                         KeyDown="InputBox_KeyDown" />
+                <Button x:Name="SendButton" Grid.Column="1"
+                        Content="Send" Margin="8,0,0,0"
+                        Width="60" Height="32"
+                        Background="#0E639C" Foreground="White"
+                        BorderThickness="0" Cursor="Hand"
+                        Click="SendButton_Click" />
+            </Grid>
+        </Border>
+
+        <!-- disabled overlay when no API key -->
+        <Grid Grid.Row="0" Grid.RowSpan="3" x:Name="DisabledOverlay"
+              Visibility="Collapsed" Background="#CC1E1E1E">
+            <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="#888888" TextAlignment="Center"
+                       TextWrapping="Wrap" Margin="20" FontSize="13">
+                No OPENAI_API_KEY set.&#x0a;AI chat is unavailable.
+            </TextBlock>
+        </Grid>
+    </Grid>
+</UserControl>

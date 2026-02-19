@@ -65,11 +65,11 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
             _ = Task.Run(async () =>
             {
                 await _termStarted.Task;
-                
+
                 // store sentinel in two ps variables so the literal guid never appears in a command
                 var spaces = new string(' ', FormattedSentinel.Length);
-                var sentinelLeft = FormattedSentinel[..(FormattedSentinel.Length/2)];
-                var sentinelRight = FormattedSentinel[(FormattedSentinel.Length/2)..];
+                var sentinelLeft = FormattedSentinel[..(FormattedSentinel.Length / 2)];
+                var sentinelRight = FormattedSentinel[(FormattedSentinel.Length / 2)..];
                 WriteCommand($$"""
                                $WINGMAN_SENTINEL_LEFT = "{{sentinelLeft}}"
                                $WINGMAN_SENTINEL_RIGHT = "{{sentinelRight}}"
@@ -89,7 +89,7 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
 
         // wait for initialization to complete
         await initComplete.Task;
-        
+
         // let commands run
         _commandLock.Release();
     }

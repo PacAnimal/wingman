@@ -1,8 +1,11 @@
 using System.Windows;
 using System.Windows.Threading;
 using Cathedral.Logging;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using OpenAI;
 
 namespace Wingman;
 
@@ -41,7 +44,24 @@ public partial class App : Application
                 services.AddSereneConsoleLogging();
                 services.AddSingleton<IWindowsNative, WindowsNative>();
                 services.AddSingleton<ITerminal, Terminal>();
-                services.AddSingleton<MainWindow>();
+                services.AddSingleton<IAgentTool, RunCommandTool>();
+
+                // AI chat: only wire up if API key is configured
+                var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+                if (!string.IsNullOrEmpty(apiKey))
+                {
+                    services.AddChatClient(
+                            new OpenAIClient(apiKey).GetChatClient("gpt-4o").AsIChatClient())
+                        .UseFunctionInvocation();
+                    services.AddSingleton<IChatService, ChatService>();
+                }
+
+                // factory so IChatService? resolves to null when not registered
+                services.AddSingleton<MainWindow>(sp => new MainWindow(
+                    sp.GetRequiredService<ILogger<MainWindow>>(),
+                    sp.GetRequiredService<IWindowsNative>(),
+                    sp.GetRequiredService<ITerminal>(),
+                    sp.GetService<IChatService>()));
             })
             .Build();
 

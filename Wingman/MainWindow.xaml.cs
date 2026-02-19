@@ -10,12 +10,14 @@ public partial class MainWindow
     private readonly IWindowsNative _native;
     private readonly ITerminal _terminal;
 
-    public MainWindow(ILogger<MainWindow> log, IWindowsNative native, ITerminal terminal)
+    public MainWindow(ILogger<MainWindow> log, IWindowsNative native, ITerminal terminal, IChatService? chatService)
     {
         _log = log;
         _native = native;
         _terminal = terminal;
         InitializeComponent();
+
+        ChatPanel.Initialize(chatService);
 
         if (!_native.ProbeConPTY())
             MessageBox.Show("FAILED to load conpty.dll — ConPTY will not work.",
@@ -30,13 +32,7 @@ public partial class MainWindow
 
         // Init() must run synchronously here (UI thread) so DisconnectConPTYTerm() happens
         // before Show() → Loaded fires — otherwise the control races us with the default factory
-        var initTask = _terminal.Init(Terminal);
-        Task.Run(async () =>
-        {
-            await initTask;
-            var result = await _terminal.RunCommand("dir");
-            _log.LogInformation("dir output:\n{Output}", result);
-        });
+        _ = _terminal.Init(Terminal);
     }
 
     private void OnThreadPreprocessMessage(ref MSG msg, ref bool handled)

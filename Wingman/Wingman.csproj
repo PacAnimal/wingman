@@ -30,6 +30,8 @@
 
     <ItemGroup>
       <PackageReference Include="Cathedral" Version="0.0.403" />
+      <PackageReference Include="Microsoft.Extensions.AI" Version="10.3.0" />
+      <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.3.0" />
       <PackageReference Include="Microsoft.Extensions.Hosting" Version="*" />
       <!-- GeneratePathProperty gives us $(PkgCI_Microsoft_Windows_Console_ConPTY) for manual import below.
            The package's .targets file is misnamed (missing the CI. prefix) so NuGet never auto-imports it. -->

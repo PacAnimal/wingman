@@ -3,14 +3,30 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:Wingman"
         xmlns:term="clr-namespace:EasyWindowsTerminalControl;assembly=EasyWindowsTerminalControl"
         mc:Ignorable="d"
-        Title="Wingman" Height="600" Width="900"
+        Title="Wingman" Height="600" Width="1400"
         Background="#1E1E1E" Padding="0">
     <Grid>
-        <term:EasyTerminalControl x:Name="Terminal"
-            StartupCommandLine="pwsh.exe -NoProfile"
-            Win32InputMode="True"
-            InputCapture="TabKey,DirectionKeys" />
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="380" MinWidth="250" />
+            <ColumnDefinition Width="3" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <local:ChatPanel x:Name="ChatPanel" Grid.Column="0" />
+
+        <GridSplitter Grid.Column="1" Width="3"
+                      HorizontalAlignment="Stretch"
+                      Background="#333333" />
+
+        <Border Grid.Column="2" Background="Black">
+            <term:EasyTerminalControl x:Name="Terminal"
+                Margin="8,0,0,0"
+                StartupCommandLine="pwsh.exe -NoProfile"
+                Win32InputMode="True"
+                InputCapture="TabKey,DirectionKeys" />
+        </Border>
     </Grid>
 </Window>
