@@ -7,6 +7,8 @@ using System.Windows.Threading;
 
 namespace Wingman;
 
+public enum FocusTarget { Input, Console, QuestionCard, ChatLogText }
+
 public partial class ChatPanel : UserControl
 {
     private static readonly string[] HintStrings =
@@ -14,10 +16,12 @@ public partial class ChatPanel : UserControl
         "Hit Ctrl+Space switches focus",
         "Hit Press Esc to cancel the AI",
         "Hit Ctrl+Enter for a new line",
-        "Click Reset to start fresh",
+        "Type /reset to start fresh",
         "Hit Shift+Enter accepts approval cards",
         "Ctrl+Arrow keys resize the panels",
     ];
+
+    private static readonly string[] SlashCommandNames = ["/reset"];
 
     private static readonly ControlTemplate BubbleTextTemplate = MakeBubbleTextTemplate();
     private static readonly ControlTemplate CopyBtnTemplate = MakeCopyBtnTemplate();
@@ -37,6 +41,27 @@ public partial class ChatPanel : UserControl
     private Border? _activeCard;
     private Brush? _savedCaretBrush;
     private double _bubbleMaxWidth = 360;
+    private bool _suppressCompletion;
+
+    private FocusTarget _currentFocus = FocusTarget.Input;
+    private TextBox? _selectedBubble;
+    private TextBox? _mouseDownBubble;
+
+    public FocusTarget CurrentFocus
+    {
+        get => _currentFocus;
+        set
+        {
+            var prev = _currentFocus;
+            _currentFocus = value; // update first to prevent re-entrancy via InputBox.GotFocus
+            if (prev == FocusTarget.ChatLogText && value != FocusTarget.ChatLogText)
+            {
+                _selectedBubble?.Select(0, 0);
+                _selectedBubble = null;
+                InputBox.Focus(); // bubble held keyboard focus; return it to InputBox
+            }
+        }
+    }
 
     private readonly string[] _hints;
     private int _hintIndex;
@@ -46,6 +71,9 @@ public partial class ChatPanel : UserControl
     public ChatPanel()
     {
         InitializeComponent();
+
+        InputBox.TextChanged += (_, _) => UpdateCompletionPopup();
+        InputBox.GotFocus += (_, _) => CurrentFocus = FocusTarget.Input;
 
         // abort pending card if focus leaves the panel entirely (e.g. user switches to terminal)
         IsKeyboardFocusWithinChanged += (_, e) =>
@@ -64,11 +92,31 @@ public partial class ChatPanel : UserControl
                     g.MaxWidth = _bubbleMaxWidth;
         };
 
-        // clicking anywhere in the chat log focuses the input field (skip when a card is active)
-        MessagesScrollViewer.PreviewMouseDown += (_, _) =>
+        // track which bubble was clicked — defer all focus decisions to mouse up
+        // so drag selection isn't interrupted by an early InputBox.Focus()
+        MessagesScrollViewer.PreviewMouseDown += (_, e) =>
         {
-            if (_activeCard == null)
+            if (_activeCard != null) return;
+            _mouseDownBubble = e.OriginalSource is DependencyObject src ? FindBubbleTextBox(src) : null;
+        };
+
+        // after mouse-up: if text was selected in a bubble, track it and leave focus on the bubble;
+        // otherwise focus InputBox
+        MessagesScrollViewer.PreviewMouseUp += (_, _) =>
+        {
+            var bubble = _mouseDownBubble;
+            _mouseDownBubble = null;
+            if (bubble != null && !string.IsNullOrEmpty(bubble.SelectedText))
+            {
+                if (_selectedBubble != bubble)
+                    _selectedBubble?.Select(0, 0);
+                _selectedBubble = bubble;
+                CurrentFocus = FocusTarget.ChatLogText; // bubble keeps keyboard focus
+            }
+            else
+            {
                 InputBox.Focus();
+            }
         };
 
         // shuffled hints — different order each launch
@@ -202,13 +250,45 @@ public partial class ChatPanel : UserControl
         return true;
     }
 
-    private async void ResetButton_Click(object sender, RoutedEventArgs e)
+    private async Task<bool> TryExecuteSlashCommand(string text)
     {
+        if (!text.Equals("/reset", StringComparison.OrdinalIgnoreCase)) return false;
         CancelStreaming();
         _chatService?.ClearHistory();
         MessagesPanel.Children.Clear();
         if (ResetRequested != null)
             await ResetRequested.Invoke();
+        return true;
+    }
+
+    private void UpdateCompletionPopup()
+    {
+        if (_suppressCompletion) return;
+        var text = InputBox.Text;
+        if (text.StartsWith('/'))
+        {
+            var matches = SlashCommandNames
+                .Where(c => c.StartsWith(text, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (matches.Length > 0)
+            {
+                CompletionList.ItemsSource = matches;
+                CompletionList.SelectedIndex = 0;
+                CompletionPopup.IsOpen = true;
+                return;
+            }
+        }
+        CompletionPopup.IsOpen = false;
+    }
+
+    private void AcceptCompletion()
+    {
+        if (CompletionList.SelectedItem is not string command) return;
+        _suppressCompletion = true;
+        InputBox.Text = command;
+        InputBox.CaretIndex = command.Length;
+        CompletionPopup.IsOpen = false;
+        _suppressCompletion = false;
     }
 
     public TextBox InputTextBox => InputBox;
@@ -216,6 +296,21 @@ public partial class ChatPanel : UserControl
     // panel-level handler: intercepts keys regardless of which child has focus
     private void Panel_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (CurrentFocus == FocusTarget.ChatLogText && _selectedBubble != null && !IsModifierKey(e.Key))
+        {
+            if (e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control)
+            {
+                Clipboard.SetText(_selectedBubble.SelectedText);
+                CurrentFocus = FocusTarget.Input; // setter clears selection + returns focus to InputBox
+                e.Handled = true;
+                return;
+            }
+            // any other key: dismiss selection (setter returns focus to InputBox);
+            // leave e.Handled false so the subsequent TextInput event routes to InputBox
+            CurrentFocus = FocusTarget.Input;
+            return;
+        }
+
         if (_pendingChoice != null && !IsModifierKey(e.Key))
         {
             var digit = KeyToDigit(e.Key);
@@ -241,6 +336,34 @@ public partial class ChatPanel : UserControl
 
     private void InputBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (CompletionPopup.IsOpen)
+        {
+            switch (e.Key)
+            {
+                case Key.Tab:
+                    AcceptCompletion();
+                    e.Handled = true;
+                    return;
+                case Key.Escape:
+                    CompletionPopup.IsOpen = false;
+                    e.Handled = true;
+                    return;
+                case Key.Up:
+                    CompletionList.SelectedIndex = Math.Max(0, CompletionList.SelectedIndex - 1);
+                    e.Handled = true;
+                    return;
+                case Key.Down:
+                    CompletionList.SelectedIndex = Math.Min(CompletionList.Items.Count - 1, CompletionList.SelectedIndex + 1);
+                    e.Handled = true;
+                    return;
+                case Key.Enter when Keyboard.Modifiers == ModifierKeys.None:
+                    AcceptCompletion();
+                    e.Handled = true;
+                    _ = SendMessage();
+                    return;
+            }
+        }
+
         if (e.Key != Key.Enter) return;
 
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
@@ -260,6 +383,16 @@ public partial class ChatPanel : UserControl
         _ = SendMessage();
     }
 
+    private TextBox? FindBubbleTextBox(DependencyObject obj)
+    {
+        while (obj != null)
+        {
+            if (obj is TextBox tb && tb != InputBox) return tb;
+            obj = VisualTreeHelper.GetParent(obj);
+        }
+        return null;
+    }
+
     private static bool IsModifierKey(Key key) => key is
         Key.LeftShift or Key.RightShift or
         Key.LeftCtrl or Key.RightCtrl or
@@ -268,10 +401,21 @@ public partial class ChatPanel : UserControl
 
     private async Task SendMessage()
     {
-        if (_isStreaming || _chatService == null) return;
-
         var userText = InputBox.Text.Trim();
         if (string.IsNullOrEmpty(userText)) return;
+
+        // slash commands work even during streaming or without an API key
+        if (userText.StartsWith('/'))
+        {
+            InputBox.Text = "";
+            if (await TryExecuteSlashCommand(userText)) return;
+            // unknown slash command — restore text so user can see/edit it
+            InputBox.Text = userText;
+            InputBox.CaretIndex = userText.Length;
+            return;
+        }
+
+        if (_isStreaming || _chatService == null) return;
 
         InputBox.Text = "";
         _isStreaming = true;
@@ -350,7 +494,7 @@ public partial class ChatPanel : UserControl
         var textBox = new TextBox
         {
             IsReadOnly = true,
-            Focusable = false,
+            IsTabStop = false,
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
@@ -363,7 +507,10 @@ public partial class ChatPanel : UserControl
             FontSize = 13,
             Text = text,
             Template = BubbleTextTemplate,
+            IsInactiveSelectionHighlightEnabled = true,
         };
+        textBox.Resources[SystemColors.InactiveSelectionHighlightBrushKey] =
+            new SolidColorBrush(Color.FromRgb(0x26, 0x4F, 0x78));
         var border = new Border
         {
             Child = textBox,

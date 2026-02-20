@@ -17,8 +17,7 @@ public partial class MainWindow
     private readonly IWindowsNative _native;
     private readonly ITerminal _terminal;
     private bool _alwaysOnTop;
-    private bool _terminalActive;
-    private bool _terminalHadFocusBeforeCard;
+    private FocusTarget _focusBeforeCard;
 
     public MainWindow(ILogger<MainWindow> log, IWindowsNative native, ITerminal terminal, IChatService? chatService, AgentEvents? agentEvents)
     {
@@ -33,12 +32,13 @@ public partial class MainWindow
         {
             if (cardActive)
             {
-                _terminalHadFocusBeforeCard = _terminalActive;
+                _focusBeforeCard = ChatPanel.CurrentFocus;
+                ChatPanel.CurrentFocus = FocusTarget.QuestionCard;
                 TerminalBorder.BorderBrush = Brushes.Transparent;
             }
             else
             {
-                if (_terminalHadFocusBeforeCard)
+                if (_focusBeforeCard == FocusTarget.Console)
                     Terminal.Focus();
                 else
                     ChatPanel.InputTextBox.Focus();
@@ -57,7 +57,7 @@ public partial class MainWindow
         _terminal.ProcessExited += () => Dispatcher.BeginInvoke(Close);
         _terminal.CommandCompleted += () =>
         {
-            if (!_terminalActive)
+            if (ChatPanel.CurrentFocus != FocusTarget.Console)
                 Dispatcher.BeginInvoke(() => Terminal.IsCursorVisible = false);
         };
 
@@ -69,13 +69,12 @@ public partial class MainWindow
         // cursor visibility + focus outline for terminal
         Terminal.GotFocus += (_, _) =>
         {
-            _terminalActive = true;
+            ChatPanel.CurrentFocus = FocusTarget.Console;
             Terminal.IsCursorVisible = true;
             TerminalBorder.BorderBrush = FocusBorderBrush;
         };
         Terminal.LostFocus += (_, _) =>
         {
-            _terminalActive = false;
             Terminal.IsCursorVisible = false;
             TerminalBorder.BorderBrush = Brushes.Transparent;
         };
@@ -135,10 +134,15 @@ public partial class MainWindow
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Escape && ChatPanel.CancelStreaming())
+        if (e.Key == Key.Escape)
         {
-            e.Handled = true;
-            return;
+            if (ChatPanel.CurrentFocus == FocusTarget.ChatLogText)
+            {
+                ChatPanel.CurrentFocus = FocusTarget.Input; // dismiss selection
+                e.Handled = true;
+                return;
+            }
+            if (ChatPanel.CancelStreaming()) { e.Handled = true; return; }
         }
 
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
@@ -168,15 +172,15 @@ public partial class MainWindow
         if (ChatPanel.HasActiveCard) return;
 
         // toggle focus between chat input and terminal
-        if (ChatPanel.InputTextBox.IsFocused)
-            Terminal.Focus();
-        else
+        if (ChatPanel.CurrentFocus == FocusTarget.Console)
             ChatPanel.InputTextBox.Focus();
+        else
+            Terminal.Focus();
     }
 
     private void GridSplitter_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
-        // _terminalActive already tracks current focus state
+        // CurrentFocus tracks active focus state
     }
 
     private void GridSplitter_PreviewMouseUp(object sender, MouseButtonEventArgs e)
@@ -184,7 +188,7 @@ public partial class MainWindow
         // restore focus after splitter drag completes
         Dispatcher.BeginInvoke(() =>
         {
-            if (_terminalActive)
+            if (ChatPanel.CurrentFocus == FocusTarget.Console)
                 Terminal.Focus();
             else
                 ChatPanel.InputTextBox.Focus();
@@ -195,6 +199,9 @@ public partial class MainWindow
     {
         if (_native.IsCtrlCKeyDown(ref msg))
         {
+            // let WPF route it to Panel_PreviewKeyDown for bubble text copy
+            if (ChatPanel.CurrentFocus == FocusTarget.ChatLogText) return;
+
             var selected = Terminal.Terminal.GetSelectedText();
             if (string.IsNullOrEmpty(selected)) return;
 

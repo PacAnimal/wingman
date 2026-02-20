@@ -13,19 +13,6 @@
         <Grid Grid.Row="0" Background="#252526">
             <TextBlock x:Name="HintText" VerticalAlignment="Center" Margin="12,0,0,0"
                        Foreground="#CCCCCC" FontSize="13" />
-            <Button x:Name="ResetButton" Content="Reset" HorizontalAlignment="Right"
-                    VerticalAlignment="Center" Margin="0,0,8,0"
-                    Focusable="False"
-                    Foreground="#AAAAAA" Cursor="Hand" Padding="6,3"
-                    Click="ResetButton_Click">
-                <Button.Template>
-                    <ControlTemplate TargetType="Button">
-                        <Border Background="Transparent" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                    </ControlTemplate>
-                </Button.Template>
-            </Button>
         </Grid>
 
         <!-- messages -->
@@ -84,5 +71,39 @@
                 No OPENAI_API_KEY set.&#x0a;AI chat is unavailable.
             </TextBlock>
         </Grid>
+
+        <!-- slash command completion popup -->
+        <Popup x:Name="CompletionPopup"
+               PlacementTarget="{Binding ElementName=InputBox}"
+               Placement="Top" StaysOpen="True" AllowsTransparency="True">
+            <Border Background="#2D2D2D" CornerRadius="4" Padding="2"
+                    BorderBrush="#3F3F3F" BorderThickness="1">
+                <ListBox x:Name="CompletionList" Focusable="False"
+                         Background="Transparent" BorderThickness="0">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Foreground" Value="#CCCCCC" />
+                            <Setter Property="FontFamily" Value="Consolas" />
+                            <Setter Property="FontSize" Value="13" />
+                            <Setter Property="Padding" Value="8,4" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter />
+                                        </Border>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <Trigger Property="IsSelected" Value="True">
+                                    <Setter Property="Background" Value="#094771" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
+            </Border>
+        </Popup>
     </Grid>
 </UserControl>
