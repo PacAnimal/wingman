@@ -16,6 +16,8 @@ public partial class MainWindow
     private readonly IWindowsNative _native;
     private readonly ITerminal _terminal;
     private bool _alwaysOnTop;
+    private bool _terminalActive;
+    private bool _terminalHadFocusBeforeCard;
 
     public MainWindow(ILogger<MainWindow> log, IWindowsNative native, ITerminal terminal, IChatService? chatService, AgentEvents? agentEvents)
     {
@@ -25,6 +27,21 @@ public partial class MainWindow
         InitializeComponent();
 
         ChatPanel.Initialize(chatService, agentEvents);
+        ChatPanel.CardActiveChanged += cardActive =>
+        {
+            if (cardActive)
+            {
+                _terminalHadFocusBeforeCard = _terminalActive;
+                TerminalBorder.BorderBrush = Brushes.Transparent;
+            }
+            else
+            {
+                if (_terminalHadFocusBeforeCard)
+                    Terminal.Focus();
+                else
+                    ChatPanel.InputTextBox.Focus();
+            }
+        };
 
         if (!_native.ProbeConPTY())
             MessageBox.Show("FAILED to load conpty.dll — ConPTY will not work.",
@@ -40,15 +57,18 @@ public partial class MainWindow
         PreviewKeyDown += OnPreviewKeyDown;
         SourceInitialized += OnSourceInitialized;
         Loaded += (_, _) => ChatPanel.InputTextBox.Focus();
+        Closing += (_, _) => Hide();
 
         // cursor visibility + focus outline for terminal
         Terminal.GotFocus += (_, _) =>
         {
+            _terminalActive = true;
             Terminal.IsCursorVisible = true;
             TerminalBorder.BorderBrush = FocusBorderBrush;
         };
         Terminal.LostFocus += (_, _) =>
         {
+            _terminalActive = false;
             Terminal.IsCursorVisible = false;
             TerminalBorder.BorderBrush = Brushes.Transparent;
         };
@@ -111,6 +131,9 @@ public partial class MainWindow
         if (e.Key != Key.Space || (Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
         e.Handled = true;
 
+        // block toggle while a card needs user input
+        if (ChatPanel.HasActiveCard) return;
+
         // toggle focus between chat input and terminal
         if (ChatPanel.InputTextBox.IsFocused)
             Terminal.Focus();
@@ -120,12 +143,19 @@ public partial class MainWindow
 
     private void OnThreadPreprocessMessage(ref MSG msg, ref bool handled)
     {
-        if (!_native.IsCtrlCKeyDown(ref msg)) return;
+        if (_native.IsCtrlCKeyDown(ref msg))
+        {
+            var selected = Terminal.Terminal.GetSelectedText();
+            if (string.IsNullOrEmpty(selected)) return;
 
-        var selected = Terminal.Terminal.GetSelectedText();
-        if (string.IsNullOrEmpty(selected)) return;
+            Clipboard.SetText(selected);
+            handled = true; // suppress ^C — don't let it reach the terminal
+            return;
+        }
 
-        Clipboard.SetText(selected);
-        handled = true; // suppress ^C — don't let it reach the terminal
+        // mouse click on the terminal's native HWND — WPF won't fire GotFocus, so force it
+        const int WM_LBUTTONDOWN = 0x0201;
+        if (msg.message == WM_LBUTTONDOWN && HwndSource.FromHwnd(msg.hwnd) == null)
+            Dispatcher.BeginInvoke(Terminal.Focus);
     }
 }

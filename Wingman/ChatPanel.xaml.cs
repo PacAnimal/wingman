@@ -22,8 +22,10 @@ public partial class ChatPanel : UserControl
     public ChatPanel()
     {
         InitializeComponent();
-        InputBox.LostFocus += (_, _) =>
+        // abort pending card if focus leaves the panel entirely (e.g. user switches to terminal)
+        IsKeyboardFocusWithinChanged += (_, e) =>
         {
+            if ((bool)e.NewValue) return;
             if (_pendingChoice != null) ResolveChoice(null);
             if (_pendingApproval != null) ResolveApproval(false);
         };
@@ -41,13 +43,20 @@ public partial class ChatPanel : UserControl
             agentEvents.ToolStarted += () => _needNewBubble = true;
     }
 
+    public event Action<bool>? CardActiveChanged;
+    public bool HasActiveCard => _activeCard != null;
+
     private void ActivatePending(Border card)
     {
         _activeCard = card;
         card.BorderThickness = new Thickness(1);
         card.BorderBrush = new SolidColorBrush(Color.FromRgb(0x00, 0x7A, 0xCC));
+        card.Focusable = true;
+        card.FocusVisualStyle = null;
         _savedCaretBrush = InputBox.CaretBrush;
         InputBox.CaretBrush = Brushes.Transparent;
+        CardActiveChanged?.Invoke(true);
+        // focus is moved to card in InsertElement, after it's in the visual tree
     }
 
     private void DeactivatePending()
@@ -55,6 +64,7 @@ public partial class ChatPanel : UserControl
         _activeCard = null;
         InputBox.CaretBrush = _savedCaretBrush;
         _savedCaretBrush = null;
+        CardActiveChanged?.Invoke(false);
     }
 
     public void SetPendingApproval(TaskCompletionSource<bool> tcs, Action<bool> onResolved, Border card)
@@ -117,57 +127,51 @@ public partial class ChatPanel : UserControl
 
     public TextBox InputTextBox => InputBox;
 
-    private void InputBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    // panel-level handler: intercepts keys regardless of which child has focus
+    private void Panel_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        // pending choice takes priority — digit selects, any other key aborts (without suppressing)
         if (_pendingChoice != null && !IsModifierKey(e.Key))
         {
             var digit = KeyToDigit(e.Key);
             if (digit >= 1 && digit <= _pendingChoiceOptions!.Length)
             {
                 ResolveChoice(_pendingChoiceOptions[digit - 1]);
-                e.Handled = true;
-                return;
             }
-            ResolveChoice(null);
-            if (e.Key != Key.Enter)
-                return;
-        }
-
-        if (e.Key == Key.Enter)
-        {
-            if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
-            {
-                // Shift+Enter: accept pending or do nothing
-                if (_pendingApproval != null)
-                    ResolveApproval(true);
-                e.Handled = true;
-                return;
-            }
-
-            if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
-            {
-                // ctrl+enter: reject pending if any, then insert newline
-                if (_pendingApproval != null)
-                    ResolveApproval(false);
-                var idx = InputBox.CaretIndex;
-                InputBox.Text = InputBox.Text.Insert(idx, "\r\n");
-                InputBox.CaretIndex = idx + 2;
-                e.Handled = true;
-                return;
-            }
-
-            // plain enter: reject pending if any, then send
-            if (_pendingApproval != null)
-                ResolveApproval(false);
+            else
+                ResolveChoice(null);
             e.Handled = true;
-            _ = SendMessage();
             return;
         }
 
-        // any non-enter key rejects pending (ignore standalone modifier keys)
         if (_pendingApproval != null && !IsModifierKey(e.Key))
-            ResolveApproval(false);
+        {
+            if (e.Key == Key.Enter && (Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+                ResolveApproval(true);
+            else
+                ResolveApproval(false);
+            e.Handled = true;
+        }
+    }
+
+    private void InputBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            // ctrl+enter: insert newline
+            var idx = InputBox.CaretIndex;
+            InputBox.Text = InputBox.Text.Insert(idx, "\r\n");
+            InputBox.CaretIndex = idx + 2;
+            e.Handled = true;
+            return;
+        }
+
+        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0) return;
+
+        // plain enter: send
+        e.Handled = true;
+        _ = SendMessage();
     }
 
     private static bool IsModifierKey(Key key) => key is
@@ -261,6 +265,9 @@ public partial class ChatPanel : UserControl
     {
         MessagesPanel.Children.Add(element);
         ScrollToBottom();
+        // focus the card after it's in the visual tree so the TextBox border clears naturally
+        if (element == _activeCard)
+            _activeCard.Focus();
     }
 
     public void RemoveElement(UIElement element) => MessagesPanel.Children.Remove(element);

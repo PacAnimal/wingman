@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Channels;
 using Cathedral.Extensions;
 using EasyWindowsTerminalControl;
@@ -7,10 +8,12 @@ using Microsoft.Extensions.Logging;
 
 namespace Wingman;
 
+public record CommandResult(string Command, string Output, int ExitCode, bool Success, string WorkingDirectory);
+
 public interface ITerminal
 {
     Task Init(EasyTerminalControl terminalControl);
-    Task<string> RunCommand(string command, int timeoutMs = 30000);
+    Task<CommandResult> RunCommand(string command, int timeoutMs = 30000);
     event Action? ProcessExited;
 }
 
@@ -67,19 +70,31 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
                 await _termStarted.Task;
 
                 // store sentinel in two ps variables so the literal guid never appears in a command
-                var spaces = new string(' ', FormattedSentinel.Length);
                 var sentinelLeft = FormattedSentinel[..(FormattedSentinel.Length / 2)];
                 var sentinelRight = FormattedSentinel[(FormattedSentinel.Length / 2)..];
                 WriteCommand($$"""
                                $WINGMAN_SENTINEL_LEFT = "{{sentinelLeft}}"
                                $WINGMAN_SENTINEL_RIGHT = "{{sentinelRight}}"
                                Set-PSReadLineOption -HistorySaveStyle SaveNothing
-                               function prompt { Write-Host "`e[30m${WINGMAN_SENTINEL_LEFT}${WINGMAN_SENTINEL_RIGHT}`e[0m`r{{spaces}}`r" -NoNewline; "PS $($executionContext.SessionState.Path.CurrentLocation)> " }
+                               function prompt {
+                                   $wm_ok = $?
+                                   $wm_code = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+                                   $wm_cwd = $PWD.Path
+                                   $wm_s = "${WINGMAN_SENTINEL_LEFT}${WINGMAN_SENTINEL_RIGHT}"
+                                   $wm_exit = "${wm_code}|${wm_ok}"
+                                   function wm_hide($t) { Write-Host "`e[30m${t}`e[0m`r$(' ' * $t.Length)`r" -NoNewline }
+                                   wm_hide $wm_s
+                                   wm_hide $wm_exit
+                                   wm_hide $wm_s
+                                   wm_hide $wm_cwd
+                                   wm_hide $wm_s
+                                   "PS $($executionContext.SessionState.Path.CurrentLocation)> "
+                               }
                                [Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory(); clear; Write-Host "`nWingman ready!`n" -ForegroundColor Green
                                """);
 
-                // drain init sentinels - the "prompt" command and the Write-Host command print one each
-                await WaitForSentinel(2);
+                // drain init sentinels - prompt fires twice during init, 3 sentinels each
+                await WaitForSentinel(6);
                 initComplete.TrySetResult();
             });
         };
@@ -94,7 +109,7 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
         _commandLock.Release();
     }
 
-    public async Task<string> RunCommand(string command, int timeoutMs = 30000)
+    public async Task<CommandResult> RunCommand(string command, int timeoutMs = 30000)
     {
         if (_term is null) throw new InvalidOperationException("Terminal not ready");
 
@@ -103,21 +118,45 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
         var sw = Stopwatch.StartNew();
         WriteCommand(command);
 
-        // wait for sentinel from prompt after command finishes
-        await WaitForSentinel(timeoutMs: timeoutMs);
-        var endIdx = _outputBuffer.ToString().LastIndexOfOrdinal(FormattedSentinel);
+        // wait for 3 sentinels: end of output, end of exit status, end of cwd
+        await WaitForSentinel(3, timeoutMs);
+        var buffer = _outputBuffer.ToString();
+        var sentinelLen = FormattedSentinel.Length;
 
-        var output = _outputBuffer.ToString()[offset..endIdx];
+        var s1 = buffer.IndexOf(FormattedSentinel, offset, StringComparison.Ordinal);
+        var s2 = buffer.IndexOf(FormattedSentinel, s1 + sentinelLen, StringComparison.Ordinal);
+        var s3 = buffer.IndexOf(FormattedSentinel, s2 + sentinelLen, StringComparison.Ordinal);
+
+        var output = buffer[offset..s1];
+        var exitRaw = buffer[(s1 + sentinelLen)..s2];
+        var cwdRaw = buffer[(s2 + sentinelLen)..s3];
 
         // strip the echoed command (first line)
         var firstNewline = output.IndexOf('\n');
         if (firstNewline >= 0)
             output = output[(firstNewline + 1)..];
 
+        // parse exit status: "0|True" or "1|False"
+        var exitParts = ExtractHiddenData(exitRaw).Split('|');
+        var exitCode = int.TryParse(exitParts.Length > 0 ? exitParts[0] : null, out var parsedCode) ? parsedCode : 0;
+        var success = !bool.TryParse(exitParts.Length > 1 ? exitParts[1] : null, out var parsedSuccess) || parsedSuccess;
+
+        var cwd = ExtractHiddenData(cwdRaw);
+
+        var result = new CommandResult(command, output.Trim(), exitCode, success, cwd);
         var elapsed = (int)sw.ElapsedMilliseconds;
         log.LogInformation("Command executed in {Elapsed}ms: {Command}", elapsed, command);
+        log.LogDebug("Command result: {Result}", JsonSerializer.Serialize(result));
 
-        return output.Trim();
+        return result;
+    }
+
+    private static string ExtractHiddenData(string raw)
+    {
+        foreach (var part in raw.Split('\r'))
+            if (part.Length > 0 && !part.AsSpan().IsWhiteSpace())
+                return part;
+        return "";
     }
 
     private async Task WaitForSentinel(int count = 1, int timeoutMs = 30000)

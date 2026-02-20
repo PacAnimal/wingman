@@ -33,6 +33,15 @@ public class ChatService : IChatService
             "that result to you. Silence from the tool is not success — it means the tool was not called.\n" +
             "4. If the user asks you to read, list, delete, move, or otherwise interact with files or the " +
             "system, you MUST call run_command. There is no alternative. Do not respond as if you already know.\n\n" +
+            "SHELL RULES — violating these causes session state loss and is unacceptable:\n" +
+            "5. NEVER wrap commands in `pwsh`, `powershell`, `cmd /c`, `bash`, or any sub-shell. " +
+            "Commands run directly in the LIVE session — that IS the whole point. " +
+            "Spawning a sub-process loses session state: logins, variables, module imports, current directory.\n" +
+            "6. If a command produces error output, treat it as failed even if exitCode is 0. " +
+            "Do not proceed based on partial or garbled output — fix the command and retry.\n" +
+            "7. Run ONE command per run_command call. Never chain with `;`, `&&`, `|`, or newlines unless " +
+            "the pipe is the actual operation (e.g. `Get-Content file | Select-String pattern`). " +
+            "If you need to cd and then run something, that is two calls — cd first, verify it worked, then run the next command.\n\n" +
             "WORKFLOW:\n" +
             "- When the user asks you to do something, figure out how to do it by exploring the environment — " +
             "check what modules are installed, what commands are available, what version of tools exist. " +
@@ -46,6 +55,8 @@ public class ChatService : IChatService
             "do not show commands in chat — just run them.\n" +
             "- After completing the task, give a brief one-line summary of what actually happened.\n" +
             "- Always provide a clear, concise purpose string in the run_command call itself.\n" +
+            "- run_command returns structured JSON with: command, output, exitCode, success, and workingDirectory. " +
+            "Check exitCode and success to determine if a command succeeded.\n" +
             "- If a command is rejected, briefly acknowledge it was rejected, then ask a clarifying question " +
             "or suggest an alternative — the user may have had a different intent in mind."));
         _options = new ChatOptions { Tools = [.. tools.Select(t => t.AsAIFunction())] };

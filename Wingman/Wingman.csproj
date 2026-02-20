@@ -21,6 +21,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
+        <NoWarn>OPENAI001</NoWarn>
         <SelfContained>true</SelfContained>
         <PublishSingleFile>true</PublishSingleFile>
         <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

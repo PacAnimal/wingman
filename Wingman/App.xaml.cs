@@ -52,13 +52,13 @@ public partial class App : Application
                     services.AddSingleton<AgentEvents>();
                     var openAiClient = new OpenAIClient(apiKey);
 
-                    // conversation client (gpt-5.1) with function invocation middleware
+                    // conversation client (gpt-5.1-codex) with function invocation middleware
                     services.AddChatClient(
-                            openAiClient.GetChatClient("gpt-5.1").AsIChatClient())
+                            openAiClient.GetResponsesClient("gpt-5.2").AsIChatClient())
                         .UseFunctionInvocation();
 
                     // guard client (gpt-5-mini) — registered directly, not as IChatClient
-                    var guardClient = openAiClient.GetChatClient("gpt-5-mini").AsIChatClient();
+                    var guardClient = openAiClient.GetResponsesClient("gpt-5-mini").AsIChatClient();
                     services.AddSingleton<ICommandGuard>(sp =>
                         new CommandGuard(guardClient, sp.GetRequiredService<ILogger<CommandGuard>>()));
 
