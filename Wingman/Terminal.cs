@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
@@ -16,6 +17,7 @@ public interface ITerminal
     Task Init(EasyTerminalControl terminalControl);
     Task<CommandResult> RunCommand(string command);
     event Action? ProcessExited;
+    event Action? CommandCompleted;
 }
 
 public class Terminal(ILogger<Terminal> log) : ITerminal
@@ -25,8 +27,10 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
     private readonly TaskCompletionSource _termStarted = new();
     private readonly SemaphoreSlim _commandLock = new(0, 1);
     private TermPTY? _term;
+    private string? _scratchDir;
 
     public event Action? ProcessExited;
+    public event Action? CommandCompleted;
 
     private string Sentinel { get; } = $"{Guid.NewGuid()}";
     private string FormattedSentinel => $"[{Sentinel}]";
@@ -71,12 +75,22 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
             {
                 await _termStarted.Task;
 
+                _scratchDir = Path.Combine(Path.GetTempPath(), "Wingman", Guid.NewGuid().ToString());
+                Directory.CreateDirectory(_scratchDir);
+                ProcessExited += () =>
+                {
+                    if (_scratchDir == null) return;
+                    try { Directory.Delete(_scratchDir, recursive: true); }
+                    catch { /* best-effort */ }
+                };
+
                 // store sentinel in two ps variables so the literal guid never appears in a command
                 var sentinelLeft = FormattedSentinel[..(FormattedSentinel.Length / 2)];
                 var sentinelRight = FormattedSentinel[(FormattedSentinel.Length / 2)..];
                 WriteCommand($$"""
                                $WINGMAN_SENTINEL_LEFT = "{{sentinelLeft}}"
                                $WINGMAN_SENTINEL_RIGHT = "{{sentinelRight}}"
+                               New-Variable -Name WMTMP -Value "{{_scratchDir}}" -Option Constant -Scope Global
                                Set-PSReadLineOption -HistorySaveStyle SaveNothing
                                function prompt {
                                    $wm_ok = $?
@@ -169,6 +183,7 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
             var result = new CommandResult(command, output.Trim(), exitCode, success, cwd);
             log.LogInformation("Command executed in {Elapsed}ms: {Command}", (int)sw.ElapsedMilliseconds, command);
             log.LogDebug("Command result: {Result}", JsonSerializer.Serialize(result));
+            CommandCompleted?.Invoke();
             return result;
         }
     }

@@ -29,6 +29,7 @@ public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : IC
         - Status checks: git status, git log, git diff, git branch
         - Build/test: dotnet build, dotnet test, dotnet run
         - Environment inspection: $env:*, [System.Environment]::GetEnvironmentVariable
+        - Scratch directory: any read, write, or delete targeting $WMTMP or a path under $WMTMP — these are safe per-session temp ops
 
         Flag for review (respond with accept: false):
         - Filesystem changes: Remove-Item, rm, del, mkdir, cp, mv, New-Item, Rename-Item, Write-*, Set-Content, Out-File, etc.
@@ -54,32 +55,39 @@ public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : IC
 
     public async Task<GuardResult> EvaluateAsync(string command, string purpose, CancellationToken ct = default)
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(TimeSpan.FromSeconds(10));
-
-        try
+        var messages = new List<ChatMessage>
         {
-            var messages = new List<ChatMessage>
+            new(ChatRole.System, SystemPrompt),
+            new(ChatRole.User, $"Command: {command}\nPurpose: {purpose}")
+        };
+        var options = new ChatOptions { MaxOutputTokens = 1000 };
+
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(Constants.GuardTimeoutMs);
+
+            try
             {
-                new(ChatRole.System, SystemPrompt),
-                new(ChatRole.User, $"Command: {command}\nPurpose: {purpose}")
-            };
-            var options = new ChatOptions { MaxOutputTokens = 1000 };
+                var response = await client.GetResponseAsync(messages, options, cts.Token);
+                var text = response.Text ?? "";
+                logger.LogDebug("Guard raw response: {Text}", text);
+                var json = ExtractJson(text);
+                using var doc = JsonDocument.Parse(json);
+                var accept = doc.RootElement.GetProperty("accept").GetBoolean();
+                var reason = doc.RootElement.GetProperty("reason").GetString() ?? "";
 
-            var response = await client.GetResponseAsync(messages, options, cts.Token);
-            var text = response.Text ?? "";
-            logger.LogDebug("Guard raw response: {Text}", text);
-            var json = ExtractJson(text);
-            using var doc = JsonDocument.Parse(json);
-            var accept = doc.RootElement.GetProperty("accept").GetBoolean();
-            var reason = doc.RootElement.GetProperty("reason").GetString() ?? "";
+                return new GuardResult(accept ? CommandVerdict.Accepted : CommandVerdict.NeedsReview, reason);
+            }
+            catch (Exception ex)
+            {
+                if (attempt < 3)
+                    logger.LogWarning(ex, "Guard evaluation attempt {Attempt} failed, retrying", attempt);
+                else
+                    logger.LogWarning(ex, "Guard evaluation failed after 3 attempts, defaulting to NeedsReview");
+            }
+        }
 
-            return new GuardResult(accept ? CommandVerdict.Accepted : CommandVerdict.NeedsReview, reason);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Guard evaluation failed, defaulting to NeedsReview");
-            return new GuardResult(CommandVerdict.NeedsReview, "Guard unavailable — manual review required");
-        }
+        return new GuardResult(CommandVerdict.NeedsReview, "Guard unavailable — manual review required");
     }
 }

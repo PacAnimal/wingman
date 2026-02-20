@@ -68,7 +68,11 @@ public class ChatService : IChatService
             "or suggest an alternative — the user may have had a different intent in mind.\n" +
             "- If you cannot find something the user referred to (a file, folder, Office 365 group, user, resource, etc.), " +
             "search broadly and find the closest match. Then use ask_user with the matched name and Yes/No options " +
-            "to confirm before proceeding. Never silently assume a match or give up without searching."));
+            "to confirm before proceeding. Never silently assume a match or give up without searching.\n\n" +
+            "SCRATCH DIRECTORY:\n" +
+            "- $WMTMP is a per-session scratch directory for temporary files. Use it freely for intermediate work.\n" +
+            "- NEVER change the value of $WMTMP — it is a constant set by Wingman.\n" +
+            "- Clean up files you create in $WMTMP when you no longer need them."));
         _options = new ChatOptions { Tools = [.. tools.Select(t => t.AsAIFunction())] };
     }
 

@@ -53,6 +53,11 @@ public partial class MainWindow
         Closed += (_, _) => ComponentDispatcher.ThreadPreprocessMessage -= OnThreadPreprocessMessage;
 
         _terminal.ProcessExited += () => Dispatcher.BeginInvoke(Close);
+        _terminal.CommandCompleted += () =>
+        {
+            if (!_terminalActive)
+                Dispatcher.BeginInvoke(() => Terminal.IsCursorVisible = false);
+        };
 
         PreviewKeyDown += OnPreviewKeyDown;
         SourceInitialized += OnSourceInitialized;

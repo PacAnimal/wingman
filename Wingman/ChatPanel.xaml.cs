@@ -11,6 +11,9 @@ public partial class ChatPanel : UserControl
     private IChatService? _chatService;
     private bool _isStreaming;
     private volatile bool _needNewBubble;
+    private TypingIndicator? _typing;
+    private TextBlock? _currentBubble;
+    private bool _currentBubbleHasContent;
     private TaskCompletionSource<bool>? _pendingApproval;
     private Action<bool>? _pendingApprovalCallback;
     private TaskCompletionSource<string?>? _pendingChoice;
@@ -56,6 +59,10 @@ public partial class ChatPanel : UserControl
         _savedCaretBrush = InputBox.CaretBrush;
         InputBox.CaretBrush = Brushes.Transparent;
         CardActiveChanged?.Invoke(true);
+        // stop typing; remove the empty bubble so the card lands at the bottom
+        _typing?.Stop();
+        if (!_currentBubbleHasContent && _currentBubble?.Parent is UIElement parent)
+            MessagesPanel.Children.Remove(parent);
         // focus is moved to card in InsertElement, after it's in the visual tree
     }
 
@@ -65,6 +72,15 @@ public partial class ChatPanel : UserControl
         InputBox.CaretBrush = _savedCaretBrush;
         _savedCaretBrush = null;
         CardActiveChanged?.Invoke(false);
+        // if streaming, open a fresh bubble below the card summary and resume typing
+        if (_isStreaming)
+        {
+            _currentBubble = AddBubble("", isUser: false);
+            _currentBubbleHasContent = false;
+            _typing?.Retarget(_currentBubble);
+            _typing?.Start();
+            _needNewBubble = false;
+        }
     }
 
     public void SetPendingApproval(TaskCompletionSource<bool> tcs, Action<bool> onResolved, Border card)
@@ -80,8 +96,8 @@ public partial class ChatPanel : UserControl
         var cb = _pendingApprovalCallback;
         _pendingApproval = null;
         _pendingApprovalCallback = null;
+        cb?.Invoke(accept);  // summary inserted before new bubble
         DeactivatePending();
-        cb?.Invoke(accept);
         tcs?.TrySetResult(accept);
     }
 
@@ -100,8 +116,8 @@ public partial class ChatPanel : UserControl
         _pendingChoice = null;
         _pendingChoiceCallback = null;
         _pendingChoiceOptions = null;
+        cb?.Invoke(selected);  // summary inserted before new bubble
         DeactivatePending();
-        cb?.Invoke(selected);
         tcs?.TrySetResult(selected);
     }
 
@@ -191,46 +207,47 @@ public partial class ChatPanel : UserControl
         _isStreaming = true;
 
         AddBubble(userText, isUser: true);
-        var assistantBlock = AddBubble("", isUser: false);
-
-        using var typing = new TypingIndicator(assistantBlock);
-        typing.Start();
+        _currentBubble = AddBubble("", isUser: false);
+        _currentBubbleHasContent = false;
+        _typing = new TypingIndicator(_currentBubble);
+        _typing.Start();
 
         try
         {
-            var hasContent = false;
             await foreach (var chunk in _chatService.SendMessageAsync(userText))
             {
-                // tool executed between chunks — open a fresh bubble for the post-tool response
+                // accepted tool ran — open a fresh bubble for the post-tool response
                 if (_needNewBubble)
                 {
                     _needNewBubble = false;
-                    if (hasContent)
+                    if (_currentBubbleHasContent)
                     {
-                        assistantBlock = AddBubble("", isUser: false);
-                        typing.Retarget(assistantBlock);
-                        hasContent = false;
+                        _currentBubble = AddBubble("", isUser: false);
+                        _currentBubbleHasContent = false;
+                        _typing.Retarget(_currentBubble);
                     }
                 }
 
-                if (!hasContent)
+                if (!_currentBubbleHasContent)
                 {
-                    typing.Stop();
-                    assistantBlock.Text = "";
-                    hasContent = true;
+                    _typing.Stop();
+                    _currentBubble!.Text = "";
+                    _currentBubbleHasContent = true;
                 }
-                assistantBlock.Text += chunk;
+                _currentBubble!.Text += chunk;
                 ScrollToBottom();
             }
         }
         catch (Exception ex)
         {
-            typing.Stop();
-            assistantBlock.Text = $"[Error: {ex.Message}]";
-            assistantBlock.Foreground = Brushes.IndianRed;
+            _typing.Stop();
+            _currentBubble!.Text = $"[Error: {ex.Message}]";
+            _currentBubble.Foreground = Brushes.IndianRed;
         }
         finally
         {
+            _typing?.Dispose();
+            _typing = null;
             _isStreaming = false;
         }
     }
