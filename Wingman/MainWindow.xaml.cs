@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -27,6 +28,7 @@ public partial class MainWindow
         InitializeComponent();
 
         ChatPanel.Initialize(chatService, agentEvents);
+        ChatPanel.ResetRequested += async () => await _terminal.Reset();
         ChatPanel.CardActiveChanged += cardActive =>
         {
             if (cardActive)
@@ -139,6 +141,26 @@ public partial class MainWindow
             return;
         }
 
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            if (e.Key == Key.Left)
+            {
+                // shrink chat panel by 5%
+                var col = MainGrid.ColumnDefinitions[0];
+                col.Width = new GridLength(Math.Max(250, col.ActualWidth - ActualWidth * 0.05));
+                e.Handled = true;
+                return;
+            }
+            if (e.Key == Key.Right)
+            {
+                // grow chat panel by 5%, keeping at least 300px for the terminal
+                var col = MainGrid.ColumnDefinitions[0];
+                col.Width = new GridLength(Math.Min(ActualWidth - 3 - 300, col.ActualWidth + ActualWidth * 0.05));
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (e.Key != Key.Space || (Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
         e.Handled = true;
 
@@ -150,6 +172,23 @@ public partial class MainWindow
             Terminal.Focus();
         else
             ChatPanel.InputTextBox.Focus();
+    }
+
+    private void GridSplitter_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        // _terminalActive already tracks current focus state
+    }
+
+    private void GridSplitter_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        // restore focus after splitter drag completes
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_terminalActive)
+                Terminal.Focus();
+            else
+                ChatPanel.InputTextBox.Focus();
+        });
     }
 
     private void OnThreadPreprocessMessage(ref MSG msg, ref bool handled)

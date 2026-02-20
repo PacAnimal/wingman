@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -8,12 +9,25 @@ namespace Wingman;
 
 public partial class ChatPanel : UserControl
 {
+    private static readonly string[] HintStrings =
+    [
+        "Hit Ctrl+Space switches focus",
+        "Hit Press Esc to cancel the AI",
+        "Hit Ctrl+Enter for a new line",
+        "Click Reset to start fresh",
+        "Hit Shift+Enter accepts approval cards",
+        "Ctrl+Arrow keys resize the panels",
+    ];
+
+    private static readonly ControlTemplate BubbleTextTemplate = MakeBubbleTextTemplate();
+    private static readonly ControlTemplate CopyBtnTemplate = MakeCopyBtnTemplate();
+
     private IChatService? _chatService;
     private bool _isStreaming;
     private CancellationTokenSource? _streamingCts;
     private volatile bool _needNewBubble;
     private TypingIndicator? _typing;
-    private TextBlock? _currentBubble;
+    private TextBox? _currentBubble;
     private bool _currentBubbleHasContent;
     private TaskCompletionSource<bool>? _pendingApproval;
     private Action<bool>? _pendingApprovalCallback;
@@ -22,10 +36,17 @@ public partial class ChatPanel : UserControl
     private string[]? _pendingChoiceOptions;
     private Border? _activeCard;
     private Brush? _savedCaretBrush;
+    private double _bubbleMaxWidth = 360;
+
+    private readonly string[] _hints;
+    private int _hintIndex;
+    private readonly DispatcherTimer _hintTimer;
+    private readonly Stopwatch _hintWatch = new();
 
     public ChatPanel()
     {
         InitializeComponent();
+
         // abort pending card if focus leaves the panel entirely (e.g. user switches to terminal)
         IsKeyboardFocusWithinChanged += (_, e) =>
         {
@@ -33,6 +54,42 @@ public partial class ChatPanel : UserControl
             if (_pendingChoice != null) ResolveChoice(null);
             if (_pendingApproval != null) ResolveApproval(false);
         };
+
+        // dynamic bubble width: track 85% of the scroll viewer's actual width
+        MessagesScrollViewer.SizeChanged += (_, _) =>
+        {
+            _bubbleMaxWidth = Math.Max(200, MessagesScrollViewer.ActualWidth * 0.85);
+            foreach (UIElement child in MessagesPanel.Children)
+                if (child is Grid g && "bubble".Equals(g.Tag))
+                    g.MaxWidth = _bubbleMaxWidth;
+        };
+
+        // clicking anywhere in the chat log focuses the input field (skip when a card is active)
+        MessagesScrollViewer.PreviewMouseDown += (_, _) =>
+        {
+            if (_activeCard == null)
+                InputBox.Focus();
+        };
+
+        // shuffled hints — different order each launch
+        _hints = [.. HintStrings];
+        for (var i = _hints.Length - 1; i > 0; i--)
+        {
+            var j = Random.Shared.Next(i + 1);
+            (_hints[i], _hints[j]) = (_hints[j], _hints[i]);
+        }
+        HintText.Text = "Hint: " + _hints[0];
+
+        _hintTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+        _hintTimer.Tick += OnHintTimerTick;
+    }
+
+    private void OnHintTimerTick(object? sender, EventArgs e)
+    {
+        _hintIndex = (_hintIndex + 1) % _hints.Length;
+        HintText.Text = "Hint: " + _hints[_hintIndex];
+        _hintWatch.Restart();
+        _hintTimer.Interval = TimeSpan.FromSeconds(15);
     }
 
     public void Initialize(IChatService? chatService, AgentEvents? agentEvents)
@@ -50,6 +107,8 @@ public partial class ChatPanel : UserControl
     public event Action<bool>? CardActiveChanged;
     public bool HasActiveCard => _activeCard != null;
 
+    public event Func<Task>? ResetRequested;
+
     private void ActivatePending(Border card)
     {
         _activeCard = card;
@@ -62,8 +121,8 @@ public partial class ChatPanel : UserControl
         CardActiveChanged?.Invoke(true);
         // stop typing; remove the empty bubble so the card lands at the bottom
         _typing?.Stop();
-        if (!_currentBubbleHasContent && _currentBubble?.Parent is UIElement parent)
-            MessagesPanel.Children.Remove(parent);
+        if (!_currentBubbleHasContent && _currentBubble?.Parent is Border { Parent: Grid wrapperGrid })
+            MessagesPanel.Children.Remove(wrapperGrid);
         // focus is moved to card in InsertElement, after it's in the visual tree
     }
 
@@ -143,10 +202,13 @@ public partial class ChatPanel : UserControl
         return true;
     }
 
-    private void ClearButton_Click(object sender, RoutedEventArgs e)
+    private async void ResetButton_Click(object sender, RoutedEventArgs e)
     {
+        CancelStreaming();
         _chatService?.ClearHistory();
         MessagesPanel.Children.Clear();
+        if (ResetRequested != null)
+            await ResetRequested.Invoke();
     }
 
     public TextBox InputTextBox => InputBox;
@@ -214,6 +276,12 @@ public partial class ChatPanel : UserControl
         InputBox.Text = "";
         _isStreaming = true;
 
+        // start hint rotation while streaming (respects elapsed time in current 15s window)
+        var remaining = TimeSpan.FromSeconds(15) - _hintWatch.Elapsed;
+        _hintTimer.Interval = remaining > TimeSpan.Zero ? remaining : TimeSpan.FromSeconds(15);
+        _hintTimer.Start();
+        _hintWatch.Start();
+
         AddBubble(userText, isUser: true);
         _currentBubble = AddBubble("", isUser: false);
         _currentBubbleHasContent = false;
@@ -267,6 +335,8 @@ public partial class ChatPanel : UserControl
         }
         finally
         {
+            _hintTimer.Stop();
+            _hintWatch.Stop();
             _typing?.Dispose();
             _typing = null;
             _streamingCts?.Dispose();
@@ -275,30 +345,66 @@ public partial class ChatPanel : UserControl
         }
     }
 
-    private TextBlock AddBubble(string text, bool isUser)
+    private TextBox AddBubble(string text, bool isUser)
     {
-        var textBlock = new TextBlock
+        var textBox = new TextBox
         {
-            Text = text,
-            Foreground = Brushes.White,
+            IsReadOnly = true,
+            Focusable = false,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            UndoLimit = 0,
+            IsUndoEnabled = false,
+            CaretBrush = Brushes.Transparent,
+            FocusVisualStyle = null,
             TextWrapping = TextWrapping.Wrap,
-            FontSize = 13
+            Foreground = Brushes.White,
+            FontSize = 13,
+            Text = text,
+            Template = BubbleTextTemplate,
         };
         var border = new Border
         {
-            Child = textBlock,
+            Child = textBox,
             Background = new SolidColorBrush(isUser
                 ? Color.FromRgb(0x0E, 0x63, 0x9C)
                 : Color.FromRgb(0x2D, 0x2D, 0x2D)),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(10, 6, 10, 6),
-            MaxWidth = 360,
-            Margin = new Thickness(8, 4, 8, 4),
-            HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left
         };
-        MessagesPanel.Children.Add(border);
+        var copyBtn = new Button
+        {
+            Content = "\uE8C8",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            FontSize = 11,
+            Focusable = false,
+            VerticalAlignment = VerticalAlignment.Top,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 2, 2, 0),
+            Padding = new Thickness(4, 2, 4, 2),
+            Visibility = Visibility.Collapsed,
+            Background = new SolidColorBrush(Color.FromArgb(0xBB, 0x1E, 0x1E, 0x1E)),
+            Foreground = Brushes.White,
+            BorderThickness = new Thickness(0),
+            Cursor = Cursors.Hand,
+            Template = CopyBtnTemplate,
+        };
+        var wrapper = new Grid
+        {
+            Tag = "bubble",
+            MaxWidth = _bubbleMaxWidth,
+            Margin = new Thickness(8, 4, 8, 4),
+            HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+        };
+        wrapper.Children.Add(border);
+        wrapper.Children.Add(copyBtn);
+        wrapper.MouseEnter += (_, _) => copyBtn.Visibility = Visibility.Visible;
+        wrapper.MouseLeave += (_, _) => copyBtn.Visibility = Visibility.Collapsed;
+        copyBtn.Click += (_, _) => Clipboard.SetText(textBox.Text);
+        MessagesPanel.Children.Add(wrapper);
         ScrollToBottom();
-        return textBlock;
+        return textBox;
     }
 
     public void InsertElement(UIElement element)
@@ -314,13 +420,42 @@ public partial class ChatPanel : UserControl
 
     private void ScrollToBottom() => MessagesScrollViewer.ScrollToEnd();
 
+    private static ControlTemplate MakeBubbleTextTemplate()
+    {
+        var template = new ControlTemplate(typeof(TextBox));
+        var sv = new FrameworkElementFactory(typeof(ScrollViewer))
+        {
+            Name = "PART_ContentHost"
+        };
+        sv.SetValue(ScrollViewer.FocusableProperty, false);
+        sv.SetValue(ScrollViewer.HorizontalScrollBarVisibilityProperty, ScrollBarVisibility.Disabled);
+        sv.SetValue(ScrollViewer.VerticalScrollBarVisibilityProperty, ScrollBarVisibility.Disabled);
+        template.VisualTree = sv;
+        return template;
+    }
+
+    private static ControlTemplate MakeCopyBtnTemplate()
+    {
+        var template = new ControlTemplate(typeof(Button));
+        var bd = new FrameworkElementFactory(typeof(Border));
+        bd.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Button.BackgroundProperty));
+        bd.SetValue(Border.PaddingProperty, new TemplateBindingExtension(Button.PaddingProperty));
+        bd.SetValue(Border.CornerRadiusProperty, new CornerRadius(3));
+        var cp = new FrameworkElementFactory(typeof(ContentPresenter));
+        cp.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+        cp.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+        bd.AppendChild(cp);
+        template.VisualTree = bd;
+        return template;
+    }
+
     private sealed class TypingIndicator : IDisposable
     {
         private readonly DispatcherTimer _timer;
         private int _dotCount;
-        private TextBlock _target;
+        private TextBox _target;
 
-        public TypingIndicator(TextBlock target)
+        public TypingIndicator(TextBox target)
         {
             _target = target;
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
@@ -334,7 +469,7 @@ public partial class ChatPanel : UserControl
         public void Start() => _timer.Start();
         public void Stop() => _timer.Stop();
 
-        public void Retarget(TextBlock newTarget)
+        public void Retarget(TextBox newTarget)
         {
             _timer.Stop();
             _dotCount = 0;

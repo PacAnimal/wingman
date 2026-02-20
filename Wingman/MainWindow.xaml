@@ -8,7 +8,7 @@
         mc:Ignorable="d"
         Title="Wingman" Icon="pack://application:,,,/Wingman.ico" Height="600" Width="1400"
         Background="#1E1E1E" Padding="0">
-    <Grid>
+    <Grid x:Name="MainGrid">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="380" MinWidth="250" />
             <ColumnDefinition Width="3" />
@@ -17,9 +17,11 @@
 
         <local:ChatPanel x:Name="ChatPanel" Grid.Column="0" />
 
-        <GridSplitter Grid.Column="1" Width="3"
-                      HorizontalAlignment="Stretch"
-                      Background="#333333" />
+        <GridSplitter x:Name="GridSplitter" Grid.Column="1" Width="3"
+                      HorizontalAlignment="Stretch" Focusable="False"
+                      Background="#333333"
+                      PreviewMouseDown="GridSplitter_PreviewMouseDown"
+                      PreviewMouseUp="GridSplitter_PreviewMouseUp" />
 
         <Border x:Name="TerminalBorder" Grid.Column="2" Background="#0C0C0C"
                 BorderThickness="1" BorderBrush="Transparent">
