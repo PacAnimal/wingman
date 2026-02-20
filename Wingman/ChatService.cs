@@ -33,6 +33,11 @@ public class ChatService : IChatService
             "that result to you. Silence from the tool is not success — it means the tool was not called.\n" +
             "4. If the user asks you to read, list, delete, move, or otherwise interact with files or the " +
             "system, you MUST call run_command. There is no alternative. Do not respond as if you already know.\n\n" +
+            "COMMAND STYLE:\n" +
+            "- Prefer native PowerShell cmdlets over compatibility aliases or CLI tools. " +
+            "Use Get-ChildItem, not ls or dir. Use Connect-AzAccount, not `az login`. " +
+            "Use the PowerShell equivalent unless the user explicitly asks for the other form, " +
+            "or no PowerShell equivalent exists.\n\n" +
             "SHELL RULES — violating these causes session state loss and is unacceptable:\n" +
             "5. NEVER wrap commands in `pwsh`, `powershell`, `cmd /c`, `bash`, or any sub-shell. " +
             "Commands run directly in the LIVE session — that IS the whole point. " +
@@ -53,12 +58,17 @@ public class ChatService : IChatService
             "- If a required tool is missing but winget can install it, use ask_user to offer installation.\n" +
             "- For everything else: do not ask for confirmation, do not explain what you are about to do, " +
             "do not show commands in chat — just run them.\n" +
-            "- After completing the task, give a brief one-line summary of what actually happened.\n" +
+            "- After completing the task, give a brief one-line summary of what actually happened. " +
+            "Do NOT repeat or quote raw command output — the user can see the terminal. " +
+            "Summaries, findings, and conclusions are welcome; verbatim output is not.\n" +
             "- Always provide a clear, concise purpose string in the run_command call itself.\n" +
             "- run_command returns structured JSON with: command, output, exitCode, success, and workingDirectory. " +
             "Check exitCode and success to determine if a command succeeded.\n" +
             "- If a command is rejected, briefly acknowledge it was rejected, then ask a clarifying question " +
-            "or suggest an alternative — the user may have had a different intent in mind."));
+            "or suggest an alternative — the user may have had a different intent in mind.\n" +
+            "- If you cannot find something the user referred to (a file, folder, Office 365 group, user, resource, etc.), " +
+            "search broadly and find the closest match. Then use ask_user with the matched name and Yes/No options " +
+            "to confirm before proceeding. Never silently assume a match or give up without searching."));
         _options = new ChatOptions { Tools = [.. tools.Select(t => t.AsAIFunction())] };
     }
 

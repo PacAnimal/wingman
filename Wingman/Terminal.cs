@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using Cathedral.Extensions;
+using Cathedral.Utils;
 using EasyWindowsTerminalControl;
 using Microsoft.Extensions.Logging;
 
@@ -13,13 +14,13 @@ public record CommandResult(string Command, string Output, int ExitCode, bool Su
 public interface ITerminal
 {
     Task Init(EasyTerminalControl terminalControl);
-    Task<CommandResult> RunCommand(string command, int timeoutMs = 30000);
+    Task<CommandResult> RunCommand(string command);
     event Action? ProcessExited;
 }
 
 public class Terminal(ILogger<Terminal> log) : ITerminal
 {
-    private readonly StringBuilder _outputBuffer = new();
+    private readonly SemaphoreSlimValue<StringBuilder> _outputBuffer = new(new StringBuilder(), disposeValue: false);
     private readonly Channel<bool> _sentinels = Channel.CreateUnbounded<bool>();
     private readonly TaskCompletionSource _termStarted = new();
     private readonly SemaphoreSlim _commandLock = new(0, 1);
@@ -44,7 +45,8 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
         {
             var text = TermPTY.StripColors(str.ToString());
             _termStarted.TrySetResult();
-            _outputBuffer.Append(text);
+            using (var buf = _outputBuffer.WaitForDisposable().GetAwaiter().GetResult())
+                buf.Value.Append(text);
             var pos = 0;
             while ((pos = text.IndexOf(FormattedSentinel, pos, StringComparison.Ordinal)) >= 0)
             {
@@ -109,46 +111,66 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
         _commandLock.Release();
     }
 
-    public async Task<CommandResult> RunCommand(string command, int timeoutMs = 30000)
+    public async Task<CommandResult> RunCommand(string command)
     {
         if (_term is null) throw new InvalidOperationException("Terminal not ready");
 
         using var _ = await _commandLock.WaitForDisposable();
-        var offset = _outputBuffer.Length;
+
+        // gobble stale sentinels from user interaction or background prompt renders
+        var drained = 0;
+        while (_sentinels.Reader.TryRead(out var stale)) drained++;
+        if (drained > 0) log.LogDebug("Drained {Count} stale sentinel(s)", drained);
+
+        int offset;
+        using (var buf = await _outputBuffer.WaitForDisposable())
+            offset = buf.Value.Length;
+
         var sw = Stopwatch.StartNew();
         WriteCommand(command);
 
-        // wait for 3 sentinels: end of output, end of exit status, end of cwd
-        await WaitForSentinel(3, timeoutMs);
-        var buffer = _outputBuffer.ToString();
+        // wait until all 3 sentinels appear in buffer after offset
+        using var timeout = new CancellationTokenSource(Constants.CommandTimeoutMs);
         var sentinelLen = FormattedSentinel.Length;
 
-        var s1 = buffer.IndexOf(FormattedSentinel, offset, StringComparison.Ordinal);
-        var s2 = buffer.IndexOf(FormattedSentinel, s1 + sentinelLen, StringComparison.Ordinal);
-        var s3 = buffer.IndexOf(FormattedSentinel, s2 + sentinelLen, StringComparison.Ordinal);
+        while (true)
+        {
+            await _sentinels.Reader.ReadAsync(timeout.Token);
 
-        var output = buffer[offset..s1];
-        var exitRaw = buffer[(s1 + sentinelLen)..s2];
-        var cwdRaw = buffer[(s2 + sentinelLen)..s3];
+            string buffer;
+            using (var buf = await _outputBuffer.WaitForDisposable(timeout.Token))
+                buffer = buf.Value.ToString();
 
-        // strip the echoed command (first line)
-        var firstNewline = output.IndexOf('\n');
-        if (firstNewline >= 0)
-            output = output[(firstNewline + 1)..];
+            var s1 = buffer.IndexOf(FormattedSentinel, offset, StringComparison.Ordinal);
+            if (s1 < 0) continue;
+            var s2 = buffer.IndexOf(FormattedSentinel, s1 + sentinelLen, StringComparison.Ordinal);
+            if (s2 < 0) continue;
+            var s3 = buffer.IndexOf(FormattedSentinel, s2 + sentinelLen, StringComparison.Ordinal);
+            if (s3 < 0) continue;
 
-        // parse exit status: "0|True" or "1|False"
-        var exitParts = ExtractHiddenData(exitRaw).Split('|');
-        var exitCode = int.TryParse(exitParts.Length > 0 ? exitParts[0] : null, out var parsedCode) ? parsedCode : 0;
-        var success = !bool.TryParse(exitParts.Length > 1 ? exitParts[1] : null, out var parsedSuccess) || parsedSuccess;
+            var output = buffer[offset..s1];
+            var exitRaw = buffer[(s1 + sentinelLen)..s2];
+            var cwdRaw = buffer[(s2 + sentinelLen)..s3];
 
-        var cwd = ExtractHiddenData(cwdRaw);
+            // trim consumed portion to prevent indefinite growth
+            using (var buf = await _outputBuffer.WaitForDisposable(timeout.Token))
+                buf.Value.Remove(0, s3 + sentinelLen);
 
-        var result = new CommandResult(command, output.Trim(), exitCode, success, cwd);
-        var elapsed = (int)sw.ElapsedMilliseconds;
-        log.LogInformation("Command executed in {Elapsed}ms: {Command}", elapsed, command);
-        log.LogDebug("Command result: {Result}", JsonSerializer.Serialize(result));
+            // strip the echoed command (first line)
+            var firstNewline = output.IndexOf('\n');
+            if (firstNewline >= 0) output = output[(firstNewline + 1)..];
 
-        return result;
+            // parse exit status: "0|True" or "1|False"
+            var exitParts = ExtractHiddenData(exitRaw).Split('|');
+            var exitCode = int.TryParse(exitParts.Length > 0 ? exitParts[0] : null, out var parsedCode) ? parsedCode : 0;
+            var success = !bool.TryParse(exitParts.Length > 1 ? exitParts[1] : null, out var parsedSuccess) || parsedSuccess;
+            var cwd = ExtractHiddenData(cwdRaw);
+
+            var result = new CommandResult(command, output.Trim(), exitCode, success, cwd);
+            log.LogInformation("Command executed in {Elapsed}ms: {Command}", (int)sw.ElapsedMilliseconds, command);
+            log.LogDebug("Command result: {Result}", JsonSerializer.Serialize(result));
+            return result;
+        }
     }
 
     private static string ExtractHiddenData(string raw)
