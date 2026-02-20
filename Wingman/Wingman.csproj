@@ -10,6 +10,7 @@
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <PlatformTarget>x64</PlatformTarget>
         <RuntimeIdentifier>win10-x64</RuntimeIdentifier>
+        <ApplicationIcon>..\Graphics\Wingman.ico</ApplicationIcon>
     </PropertyGroup>
 
     <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
@@ -28,6 +29,10 @@
         <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
         <PublishReadyToRun>true</PublishReadyToRun>
     </PropertyGroup>
+
+    <ItemGroup>
+        <Resource Include="..\Graphics\Wingman.ico" Link="Wingman.ico" />
+    </ItemGroup>
 
     <ItemGroup>
       <PackageReference Include="Cathedral" Version="0.0.403" />

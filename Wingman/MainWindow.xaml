@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:Wingman"
         xmlns:term="clr-namespace:EasyWindowsTerminalControl;assembly=EasyWindowsTerminalControl"
         mc:Ignorable="d"
-        Title="Wingman" Height="600" Width="1400"
+        Title="Wingman" Icon="pack://application:,,,/Wingman.ico" Height="600" Width="1400"
         Background="#1E1E1E" Padding="0">
     <Grid>
         <Grid.ColumnDefinitions>
