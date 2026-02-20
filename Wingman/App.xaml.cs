@@ -49,15 +49,16 @@ public partial class App : Application
                 var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
                 if (!string.IsNullOrEmpty(apiKey))
                 {
+                    services.AddSingleton<AgentEvents>();
                     var openAiClient = new OpenAIClient(apiKey);
 
-                    // conversation client (gpt-4o) with function invocation middleware
+                    // conversation client (gpt-5.1) with function invocation middleware
                     services.AddChatClient(
-                            openAiClient.GetChatClient("gpt-4o").AsIChatClient())
+                            openAiClient.GetChatClient("gpt-5.1").AsIChatClient())
                         .UseFunctionInvocation();
 
-                    // guard client (gpt-4o-mini) — registered directly, not as IChatClient
-                    var guardClient = openAiClient.GetChatClient("gpt-4o-mini").AsIChatClient();
+                    // guard client (gpt-5-mini) — registered directly, not as IChatClient
+                    var guardClient = openAiClient.GetChatClient("gpt-5-mini").AsIChatClient();
                     services.AddSingleton<ICommandGuard>(sp =>
                         new CommandGuard(guardClient, sp.GetRequiredService<ILogger<CommandGuard>>()));
 
@@ -66,7 +67,11 @@ public partial class App : Application
                         new ApprovalUI(sp.GetRequiredService<MainWindow>().ChatPanel));
                     services.AddSingleton(sp => new Lazy<IApprovalUI>(() => sp.GetRequiredService<IApprovalUI>()));
 
+                    // ask_user tool — same Lazy<ChatPanel> pattern to break circular dep
+                    services.AddSingleton(sp => new Lazy<ChatPanel>(() => sp.GetRequiredService<MainWindow>().ChatPanel));
+
                     services.AddSingleton<IAgentTool, RunCommandTool>();
+                    services.AddSingleton<IAgentTool, AskUserTool>();
                     services.AddSingleton<IChatService, ChatService>();
                 }
 
@@ -75,7 +80,8 @@ public partial class App : Application
                     sp.GetRequiredService<ILogger<MainWindow>>(),
                     sp.GetRequiredService<IWindowsNative>(),
                     sp.GetRequiredService<ITerminal>(),
-                    sp.GetService<IChatService>()));
+                    sp.GetService<IChatService>(),
+                    sp.GetService<AgentEvents>()));
             })
             .Build();
 

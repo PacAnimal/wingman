@@ -17,14 +17,14 @@ public partial class MainWindow
     private readonly ITerminal _terminal;
     private bool _alwaysOnTop;
 
-    public MainWindow(ILogger<MainWindow> log, IWindowsNative native, ITerminal terminal, IChatService? chatService)
+    public MainWindow(ILogger<MainWindow> log, IWindowsNative native, ITerminal terminal, IChatService? chatService, AgentEvents? agentEvents)
     {
         _log = log;
         _native = native;
         _terminal = terminal;
         InitializeComponent();
 
-        ChatPanel.Initialize(chatService);
+        ChatPanel.Initialize(chatService, agentEvents);
 
         if (!_native.ProbeConPTY())
             MessageBox.Show("FAILED to load conpty.dll — ConPTY will not work.",

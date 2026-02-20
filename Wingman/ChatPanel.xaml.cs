@@ -10,26 +10,58 @@ public partial class ChatPanel : UserControl
 {
     private IChatService? _chatService;
     private bool _isStreaming;
+    private volatile bool _needNewBubble;
     private TaskCompletionSource<bool>? _pendingApproval;
     private Action<bool>? _pendingApprovalCallback;
+    private TaskCompletionSource<string?>? _pendingChoice;
+    private Action<string?>? _pendingChoiceCallback;
+    private string[]? _pendingChoiceOptions;
+    private Border? _activeCard;
+    private Brush? _savedCaretBrush;
 
     public ChatPanel()
     {
         InitializeComponent();
-        InputBox.LostFocus += (_, _) => { if (_pendingApproval != null) ResolveApproval(false); };
+        InputBox.LostFocus += (_, _) =>
+        {
+            if (_pendingChoice != null) ResolveChoice(null);
+            if (_pendingApproval != null) ResolveApproval(false);
+        };
     }
 
-    public void Initialize(IChatService? chatService)
+    public void Initialize(IChatService? chatService, AgentEvents? agentEvents)
     {
         _chatService = chatService;
         if (chatService == null)
             DisabledOverlay.Visibility = Visibility.Visible;
+
+        // each tool execution signals a bubble break; the flag is read on the UI thread
+        // between chunks, so volatile is enough — no dispatcher needed
+        if (agentEvents != null)
+            agentEvents.ToolStarted += () => _needNewBubble = true;
     }
 
-    public void SetPendingApproval(TaskCompletionSource<bool> tcs, Action<bool> onResolved)
+    private void ActivatePending(Border card)
+    {
+        _activeCard = card;
+        card.BorderThickness = new Thickness(1);
+        card.BorderBrush = new SolidColorBrush(Color.FromRgb(0x00, 0x7A, 0xCC));
+        _savedCaretBrush = InputBox.CaretBrush;
+        InputBox.CaretBrush = Brushes.Transparent;
+    }
+
+    private void DeactivatePending()
+    {
+        _activeCard = null;
+        InputBox.CaretBrush = _savedCaretBrush;
+        _savedCaretBrush = null;
+    }
+
+    public void SetPendingApproval(TaskCompletionSource<bool> tcs, Action<bool> onResolved, Border card)
     {
         _pendingApproval = tcs;
         _pendingApprovalCallback = onResolved;
+        ActivatePending(card);
     }
 
     private void ResolveApproval(bool accept)
@@ -38,9 +70,44 @@ public partial class ChatPanel : UserControl
         var cb = _pendingApprovalCallback;
         _pendingApproval = null;
         _pendingApprovalCallback = null;
+        DeactivatePending();
         cb?.Invoke(accept);
         tcs?.TrySetResult(accept);
     }
+
+    public void SetPendingChoice(TaskCompletionSource<string?> tcs, Action<string?> onResolved, string[] options, Border card)
+    {
+        _pendingChoice = tcs;
+        _pendingChoiceCallback = onResolved;
+        _pendingChoiceOptions = options;
+        ActivatePending(card);
+    }
+
+    private void ResolveChoice(string? selected)
+    {
+        var tcs = _pendingChoice;
+        var cb = _pendingChoiceCallback;
+        _pendingChoice = null;
+        _pendingChoiceCallback = null;
+        _pendingChoiceOptions = null;
+        DeactivatePending();
+        cb?.Invoke(selected);
+        tcs?.TrySetResult(selected);
+    }
+
+    private static int KeyToDigit(Key key) => key switch
+    {
+        Key.D1 or Key.NumPad1 => 1,
+        Key.D2 or Key.NumPad2 => 2,
+        Key.D3 or Key.NumPad3 => 3,
+        Key.D4 or Key.NumPad4 => 4,
+        Key.D5 or Key.NumPad5 => 5,
+        Key.D6 or Key.NumPad6 => 6,
+        Key.D7 or Key.NumPad7 => 7,
+        Key.D8 or Key.NumPad8 => 8,
+        Key.D9 or Key.NumPad9 => 9,
+        _ => 0
+    };
 
     private void ClearButton_Click(object sender, RoutedEventArgs e)
     {
@@ -52,6 +119,21 @@ public partial class ChatPanel : UserControl
 
     private void InputBox_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // pending choice takes priority — digit selects, any other key aborts (without suppressing)
+        if (_pendingChoice != null && !IsModifierKey(e.Key))
+        {
+            var digit = KeyToDigit(e.Key);
+            if (digit >= 1 && digit <= _pendingChoiceOptions!.Length)
+            {
+                ResolveChoice(_pendingChoiceOptions[digit - 1]);
+                e.Handled = true;
+                return;
+            }
+            ResolveChoice(null);
+            if (e.Key != Key.Enter)
+                return;
+        }
+
         if (e.Key == Key.Enter)
         {
             if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
@@ -107,24 +189,29 @@ public partial class ChatPanel : UserControl
         AddBubble(userText, isUser: true);
         var assistantBlock = AddBubble("", isUser: false);
 
-        // cycling dots while waiting for first token
-        var dotCount = 0;
-        var typingTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        typingTimer.Tick += (_, _) =>
-        {
-            dotCount = dotCount % 3 + 1;
-            assistantBlock.Text = new string('.', dotCount);
-        };
-        typingTimer.Start();
+        using var typing = new TypingIndicator(assistantBlock);
+        typing.Start();
 
         try
         {
             var hasContent = false;
             await foreach (var chunk in _chatService.SendMessageAsync(userText))
             {
+                // tool executed between chunks — open a fresh bubble for the post-tool response
+                if (_needNewBubble)
+                {
+                    _needNewBubble = false;
+                    if (hasContent)
+                    {
+                        assistantBlock = AddBubble("", isUser: false);
+                        typing.Retarget(assistantBlock);
+                        hasContent = false;
+                    }
+                }
+
                 if (!hasContent)
                 {
-                    typingTimer.Stop();
+                    typing.Stop();
                     assistantBlock.Text = "";
                     hasContent = true;
                 }
@@ -134,13 +221,12 @@ public partial class ChatPanel : UserControl
         }
         catch (Exception ex)
         {
-            typingTimer.Stop();
+            typing.Stop();
             assistantBlock.Text = $"[Error: {ex.Message}]";
             assistantBlock.Foreground = Brushes.IndianRed;
         }
         finally
         {
-            typingTimer.Stop();
             _isStreaming = false;
         }
     }
@@ -180,4 +266,35 @@ public partial class ChatPanel : UserControl
     public void RemoveElement(UIElement element) => MessagesPanel.Children.Remove(element);
 
     private void ScrollToBottom() => MessagesScrollViewer.ScrollToEnd();
+
+    private sealed class TypingIndicator : IDisposable
+    {
+        private readonly DispatcherTimer _timer;
+        private int _dotCount;
+        private TextBlock _target;
+
+        public TypingIndicator(TextBlock target)
+        {
+            _target = target;
+            _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+            _timer.Tick += (_, _) =>
+            {
+                _dotCount = (_dotCount + 1) % 4;
+                _target.Text = _dotCount > 0 ? new string('.', _dotCount) : "";
+            };
+        }
+
+        public void Start() => _timer.Start();
+        public void Stop() => _timer.Stop();
+
+        public void Retarget(TextBlock newTarget)
+        {
+            _timer.Stop();
+            _dotCount = 0;
+            _target = newTarget;
+            _timer.Start();
+        }
+
+        public void Dispose() => _timer.Stop();
+    }
 }

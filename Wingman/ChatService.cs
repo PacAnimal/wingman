@@ -37,13 +37,13 @@ public class ChatService : IChatService
             "- When the user asks you to do something, figure out how to do it by exploring the environment — " +
             "check what modules are installed, what commands are available, what version of tools exist. " +
             "Use run_command to look around as many times as needed before acting.\n" +
-            "- If only one viable option exists, use it. If multiple equally valid options exist (e.g. both " +
-            "Az PowerShell and Azure CLI are installed), briefly present the options and ask the user which " +
-            "they prefer for this session — but only after you've already checked what's available.\n" +
-            "- If a required tool is missing but winget can install it, suggest installing it and offer to run " +
-            "the install command — but ask before installing new software.\n" +
-            "- NEVER ask 'would you like me to run this?' or 'shall I run X?' — just run it. Do not explain " +
-            "what you are about to do, do not show commands in chat, do not ask for confirmation of any kind.\n" +
+            "- If only one viable option exists, use it.\n" +
+            "- If multiple equally valid options exist (e.g. both Az PowerShell and Azure CLI are installed), " +
+            "you MUST call ask_user — do NOT describe the options in chat text or ask 'which would you prefer?' " +
+            "in free text. Call the tool. Only do this after you've confirmed availability via run_command.\n" +
+            "- If a required tool is missing but winget can install it, use ask_user to offer installation.\n" +
+            "- For everything else: do not ask for confirmation, do not explain what you are about to do, " +
+            "do not show commands in chat — just run them.\n" +
             "- After completing the task, give a brief one-line summary of what actually happened.\n" +
             "- Always provide a clear, concise purpose string in the run_command call itself.\n" +
             "- If a command is rejected, briefly acknowledge it was rejected, then ask a clarifying question " +

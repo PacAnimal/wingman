@@ -89,7 +89,7 @@ public class ApprovalUI(ChatPanel chatPanel) : IApprovalUI
                     HorizontalAlignment = HorizontalAlignment.Left,
                     TextWrapping = TextWrapping.Wrap
                 });
-            });
+            }, card);
 
             chatPanel.InsertElement(card);
         });

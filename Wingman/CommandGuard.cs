@@ -17,29 +17,40 @@ public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : IC
 {
     private const string SystemPrompt =
         """
-        You are an expert PowerShell user and security watchdog for a PowerShell terminal. Your job is to protect the user from unintended side effects.
-        Err heavily on the side of caution — when in doubt, always flag for review.
+        You are an expert PowerShell user and security watchdog for a PowerShell terminal. Your job is to protect the user from unintended changes to their machine or external services.
 
-        Accept (respond with accept: true) ONLY commands that are unambiguously read-only and purely informational:
-        - Pure queries: Get-*, ls, dir, cat, type, echo, whoami, hostname, pwd
+        The key distinction: SESSION STATE is fine; SYSTEM/EXTERNAL STATE is not.
+
+        Session state (safe — do NOT flag these):
+        - Authentication: Connect-*, Login-*, Disconnect-*, az login, az logout — these only establish or clear a local session credential; they do not create, modify, or delete anything on the machine or in the cloud
+        - Shell context: cd, Set-Location, Push-Location, Pop-Location, Set-AzContext, Select-AzSubscription — change where you're pointing, nothing else
+        - Loaded modules: Import-Module, Remove-Module — in-process only
+        - Pure queries: Get-*, ls, dir, cat, type, echo, whoami, hostname, pwd, az account show, az account list, etc.
         - Status checks: git status, git log, git diff, git branch
-        - Build/test (read-only): dotnet build, dotnet test, dotnet run (read-only by nature)
+        - Build/test: dotnet build, dotnet test, dotnet run
         - Environment inspection: $env:*, [System.Environment]::GetEnvironmentVariable
-        - Directory navigation: cd, Set-Location, Push-Location, Pop-Location (these only change the shell's working directory — they do NOT modify the filesystem or system state)
 
-        Flag for review (respond with accept: false) everything else, including:
-        - Any filesystem change: Remove-Item, rm, del, mkdir, cp, mv, New-Item, Rename-Item, Write-*, Set-Content, Out-File, Tee-Object, etc.
-        - Any state mutation: Set-* (EXCEPT Set-Location), New-*, Stop-*, Start-*, Restart-*, Enable-*, Disable-*, Register-*, Unregister-*
-        - Git writes: git commit, git push, git pull, git merge, git rebase, git reset, git checkout, git stash
-        - Package/software changes: dotnet publish, npm install, winget, choco, pip install, etc.
-        - Registry, permissions, environment variable writes
-        - Pipelines that redirect output to files (>, >>)
-        - Any command you are not completely certain is read-only
+        Flag for review (respond with accept: false):
+        - Filesystem changes: Remove-Item, rm, del, mkdir, cp, mv, New-Item, Rename-Item, Write-*, Set-Content, Out-File, etc.
+        - Cloud resource mutations: New-Az*, Remove-Az*, Set-Az* (that target resources, not context), az group create/delete, az vm start/stop, etc.
+        - Git writes: git commit, git push, git pull, git merge, git rebase, git reset
+        - Package/software installs or removes: winget, choco, pip install, npm install, dotnet publish
+        - System config: registry writes, permission changes, service Start-*/Stop-*/Restart-*, scheduled tasks
+        - Redirecting output to files (>, >>)
 
-        If you have ANY doubt, flag for review. False positives are acceptable; false negatives are not.
+        If a command only affects the current shell session and leaves the machine and external services unchanged, accept it.
+        If in doubt about whether real external or filesystem changes occur, flag for review.
 
         Respond ONLY with JSON: {"accept": true/false, "reason": "brief explanation"}
         """;
+
+    // strips markdown fences and any preamble — returns the first {...} block found
+    private static string ExtractJson(string text)
+    {
+        var start = text.IndexOf('{');
+        var end = text.LastIndexOf('}');
+        return start >= 0 && end > start ? text[start..(end + 1)] : text;
+    }
 
     public async Task<GuardResult> EvaluateAsync(string command, string purpose, CancellationToken ct = default)
     {
@@ -53,10 +64,13 @@ public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : IC
                 new(ChatRole.System, SystemPrompt),
                 new(ChatRole.User, $"Command: {command}\nPurpose: {purpose}")
             };
-            var options = new ChatOptions { Temperature = 0, MaxOutputTokens = 150, ResponseFormat = ChatResponseFormat.Json };
+            var options = new ChatOptions { MaxOutputTokens = 1000 };
 
             var response = await client.GetResponseAsync(messages, options, cts.Token);
-            using var doc = JsonDocument.Parse(response.Text ?? "");
+            var text = response.Text ?? "";
+            logger.LogDebug("Guard raw response: {Text}", text);
+            var json = ExtractJson(text);
+            using var doc = JsonDocument.Parse(json);
             var accept = doc.RootElement.GetProperty("accept").GetBoolean();
             var reason = doc.RootElement.GetProperty("reason").GetString() ?? "";
 
