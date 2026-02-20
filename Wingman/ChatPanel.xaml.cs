@@ -10,6 +10,7 @@ public partial class ChatPanel : UserControl
 {
     private IChatService? _chatService;
     private bool _isStreaming;
+    private CancellationTokenSource? _streamingCts;
     private volatile bool _needNewBubble;
     private TypingIndicator? _typing;
     private TextBlock? _currentBubble;
@@ -135,6 +136,13 @@ public partial class ChatPanel : UserControl
         _ => 0
     };
 
+    public bool CancelStreaming()
+    {
+        if (!_isStreaming || _streamingCts == null) return false;
+        _streamingCts.Cancel();
+        return true;
+    }
+
     private void ClearButton_Click(object sender, RoutedEventArgs e)
     {
         _chatService?.ClearHistory();
@@ -212,9 +220,10 @@ public partial class ChatPanel : UserControl
         _typing = new TypingIndicator(_currentBubble);
         _typing.Start();
 
+        _streamingCts = new CancellationTokenSource();
         try
         {
-            await foreach (var chunk in _chatService.SendMessageAsync(userText))
+            await foreach (var chunk in _chatService.SendMessageAsync(userText, _streamingCts.Token))
             {
                 // accepted tool ran — open a fresh bubble for the post-tool response
                 if (_needNewBubble)
@@ -238,9 +247,21 @@ public partial class ChatPanel : UserControl
                 ScrollToBottom();
             }
         }
+        catch (OperationCanceledException)
+        {
+            _typing?.Stop();
+            InsertElement(new TextBlock
+            {
+                Text = "Interrupted!",
+                Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)),
+                FontSize = 11,
+                Margin = new Thickness(10, 2, 8, 2),
+                HorizontalAlignment = HorizontalAlignment.Left
+            });
+        }
         catch (Exception ex)
         {
-            _typing.Stop();
+            _typing?.Stop();
             _currentBubble!.Text = $"[Error: {ex.Message}]";
             _currentBubble.Foreground = Brushes.IndianRed;
         }
@@ -248,6 +269,8 @@ public partial class ChatPanel : UserControl
         {
             _typing?.Dispose();
             _typing = null;
+            _streamingCts?.Dispose();
+            _streamingCts = null;
             _isStreaming = false;
         }
     }

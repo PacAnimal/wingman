@@ -133,6 +133,12 @@ public partial class MainWindow
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape && ChatPanel.CancelStreaming())
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key != Key.Space || (Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
         e.Handled = true;
 

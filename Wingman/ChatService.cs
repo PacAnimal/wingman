@@ -82,16 +82,23 @@ public class ChatService : IChatService
         _history.Add(new ChatMessage(ChatRole.User, userMessage));
 
         var responseText = new StringBuilder();
-        await foreach (var update in _client.GetStreamingResponseAsync(_history, _options, cancellationToken))
+        try
         {
-            if (!string.IsNullOrEmpty(update.Text))
+            await foreach (var update in _client.GetStreamingResponseAsync(_history, _options, cancellationToken))
             {
-                responseText.Append(update.Text);
-                yield return update.Text;
+                if (!string.IsNullOrEmpty(update.Text))
+                {
+                    responseText.Append(update.Text);
+                    yield return update.Text;
+                }
             }
         }
-
-        _history.Add(new ChatMessage(ChatRole.Assistant, responseText.ToString()));
+        finally
+        {
+            // save whatever was received, even if cancelled mid-stream
+            if (responseText.Length > 0)
+                _history.Add(new ChatMessage(ChatRole.Assistant, responseText.ToString()));
+        }
     }
 
     public void ClearHistory()
