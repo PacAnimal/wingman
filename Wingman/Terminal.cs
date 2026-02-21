@@ -21,7 +21,7 @@ public interface ITerminal
     event Action? CommandCompleted;
 }
 
-public class Terminal(ILogger<Terminal> log) : ITerminal
+public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerminal
 {
     private const int MaxOutputLength = 65_536;
 
@@ -46,6 +46,20 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
         _terminalControl = terminalControl;
         var conPty = terminalControl.DisconnectConPTYTerm();
         ++_generation;
+
+        // initial viewport size matches the conPty.Start() call below
+        screenBuffer.Resize(24, 80);
+        terminalControl.SizeChanged += (_, _) =>
+        {
+            // defer read: SizeChanged fires before WM_WINDOWPOSCHANGED updates Rows/Columns
+            terminalControl.Dispatcher.BeginInvoke(() =>
+            {
+                var t = terminalControl.Terminal;
+                if (t != null && t.Rows > 0 && t.Columns > 0)
+                    screenBuffer.Resize(t.Rows, t.Columns);
+            });
+        };
+
         await InitCore(conPty);
     }
 
@@ -59,6 +73,7 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
         ++_generation;
         _termStarted = new TaskCompletionSource();
         while (_sentinels.Reader.TryRead(out _)) { }
+        screenBuffer.Reset();
 
         using (var buf = await _outputBuffer.WaitForDisposable())
             buf.Value.Clear();
@@ -102,6 +117,7 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
         {
             if (_generation != gen) return;
             var text = TermPTY.StripColors(str.ToString());
+            screenBuffer.Feed(text); // feed stripped text — avoids VT cursor-positioning noise
             _termStarted.TrySetResult();
             using (var buf = _outputBuffer.WaitForDisposable().GetAwaiter().GetResult())
                 buf.Value.Append(text);
@@ -141,6 +157,7 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
                 WriteCommand($$"""
                                $WINGMAN_SENTINEL_LEFT = "{{sentinelLeft}}"
                                $WINGMAN_SENTINEL_RIGHT = "{{sentinelRight}}"
+                               $env:WMTMP = "{{scratchDir}}"
                                New-Variable -Name WMTMP -Value "{{scratchDir}}" -Option Constant -Scope Global
                                Set-PSReadLineOption -HistorySaveStyle SaveNothing
                                function prompt {

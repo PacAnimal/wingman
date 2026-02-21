@@ -69,6 +69,7 @@ public partial class App : Application
             {
                 services.AddSereneConsoleLogging();
                 services.AddSingleton<IWindowsNative, WindowsNative>();
+                services.AddSingleton<IScreenBuffer, ScreenBuffer>();
                 services.AddSingleton<ITerminal, Terminal>();
                 services.AddSingleton<ISettingsService>(settings);
 
@@ -78,6 +79,7 @@ public partial class App : Application
                     sp.GetRequiredService<IWindowsNative>(),
                     sp.GetRequiredService<ITerminal>(),
                     sp.GetRequiredService<ISettingsService>(),
+                    sp.GetRequiredService<IScreenBuffer>(),
                     startupError));
             })
             .Build();

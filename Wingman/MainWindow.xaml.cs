@@ -20,16 +20,18 @@ public partial class MainWindow
     private readonly IWindowsNative _native;
     private readonly ITerminal _terminal;
     private readonly ISettingsService _settings;
+    private readonly IScreenBuffer _screenBuffer;
     private bool _alwaysOnTop;
     private FocusTarget _focusBeforeCard;
 
-    public MainWindow(ILogger<MainWindow> log, ILoggerFactory loggerFactory, IWindowsNative native, ITerminal terminal, ISettingsService settings, string? startupError)
+    public MainWindow(ILogger<MainWindow> log, ILoggerFactory loggerFactory, IWindowsNative native, ITerminal terminal, ISettingsService settings, IScreenBuffer screenBuffer, string? startupError)
     {
         _log = log;
         _loggerFactory = loggerFactory;
         _native = native;
         _terminal = terminal;
         _settings = settings;
+        _screenBuffer = screenBuffer;
         InitializeComponent();
 
         ChatPanel.Initialize(null, null, startupError, OnApiKeySubmitted);
@@ -112,7 +114,7 @@ public partial class MainWindow
     {
         var openAiClient = new OpenAIClient(apiKey);
 
-        var chatClient = openAiClient.GetResponsesClient(Constants.ChatModel).AsIChatClient()
+        IChatClient ChatClientFactory() => openAiClient.GetResponsesClient(Constants.ChatModel).AsIChatClient()
             .AsBuilder().UseFunctionInvocation().Build();
 
         var guardClient = openAiClient.GetResponsesClient(Constants.GuardModel).AsIChatClient();
@@ -127,9 +129,10 @@ public partial class MainWindow
         [
             new RunCommandTool(_terminal, guard, lazyApproval, events),
             new AskUserTool(lazyPanel, events),
+            new ReadTerminalTool(_screenBuffer, events),
         ];
 
-        var chatService = new ChatService(chatClient, tools);
+        var chatService = new ChatService(ChatClientFactory, tools);
         ChatPanel.Initialize(chatService, events, null, null);
         ChatPanel.FocusPrimaryInput();
     }
@@ -183,7 +186,7 @@ public partial class MainWindow
                 e.Handled = true;
                 return;
             }
-            if (ChatPanel.CancelStreaming()) { e.Handled = true; return; }
+            if (!ChatPanel.HasActiveCard && ChatPanel.CancelStreaming()) { e.Handled = true; return; }
         }
 
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)

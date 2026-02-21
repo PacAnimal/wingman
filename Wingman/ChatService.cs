@@ -13,15 +13,17 @@ public interface IChatService
 
 public class ChatService : IChatService
 {
-    private readonly IChatClient _client;
+    private readonly Func<IChatClient> _clientFactory;
     private readonly ChatOptions _options;
     private readonly List<ChatMessage> _history = [];
+    private IChatClient _client;
 
     public IReadOnlyList<ChatMessage> History => _history;
 
-    public ChatService(IChatClient client, IEnumerable<IAgentTool> tools)
+    public ChatService(Func<IChatClient> clientFactory, IEnumerable<IAgentTool> tools)
     {
-        _client = client;
+        _clientFactory = clientFactory;
+        _client = clientFactory();
         _history.Add(new ChatMessage(ChatRole.System,
             "You are Wingman, a PowerShell assistant running inside a live terminal.\n\n" +
             "ABSOLUTE RULES — violating these is worse than any other mistake:\n" +
@@ -106,5 +108,7 @@ public class ChatService : IChatService
     {
         // keep system message
         _history.RemoveRange(1, _history.Count - 1);
+        // fresh client breaks the Responses API response chain (server-side state)
+        _client = _clientFactory();
     }
 }
