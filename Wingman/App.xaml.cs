@@ -1,11 +1,10 @@
+using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Threading;
 using Cathedral.Logging;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using OpenAI;
 
 namespace Wingman;
 
@@ -37,6 +36,33 @@ public partial class App : Application
             args.Handled = true;
         };
 
+        // load settings and determine startup state before building the host
+        var settings = new SettingsService();
+        string? startupError;
+        string? apiKey = null;
+
+        try
+        {
+            var stored = await settings.LoadAsync();
+            apiKey = stored.OpenAiApiKey;
+
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                startupError = "Enter your OpenAI API key to get started.";
+            }
+            else
+            {
+                var validationError = await settings.ValidateKeyAsync(apiKey);
+                startupError = validationError != null ? $"API key validation failed: {validationError}" : null;
+                if (startupError != null) apiKey = null;
+            }
+        }
+        catch (CryptographicException)
+        {
+            startupError = "Settings file corrupted. Enter your API key again.";
+            apiKey = null;
+        }
+
         _host = Host.CreateDefaultBuilder()
             .DisableEventLog()
             .ConfigureServices(services =>
@@ -44,50 +70,24 @@ public partial class App : Application
                 services.AddSereneConsoleLogging();
                 services.AddSingleton<IWindowsNative, WindowsNative>();
                 services.AddSingleton<ITerminal, Terminal>();
+                services.AddSingleton<ISettingsService>(settings);
 
-                // AI chat: only wire up if API key is configured
-                var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
-                if (!string.IsNullOrEmpty(apiKey))
-                {
-                    services.AddSingleton<AgentEvents>();
-                    var openAiClient = new OpenAIClient(apiKey);
-
-                    // conversation client (gpt-5.1-codex) with function invocation middleware
-                    services.AddChatClient(
-                            openAiClient.GetResponsesClient(Constants.ChatModel).AsIChatClient())
-                        .UseFunctionInvocation();
-
-                    // guard client — registered directly, not as IChatClient
-                    var guardClient = openAiClient.GetResponsesClient(Constants.GuardModel).AsIChatClient();
-                    services.AddSingleton<ICommandGuard>(sp =>
-                        new CommandGuard(guardClient, sp.GetRequiredService<ILogger<CommandGuard>>()));
-
-                    // approval UI — depends on MainWindow.ChatPanel; use Lazy<> to break circular dep
-                    services.AddSingleton<IApprovalUI>(sp =>
-                        new ApprovalUI(sp.GetRequiredService<MainWindow>().ChatPanel));
-                    services.AddSingleton(sp => new Lazy<IApprovalUI>(() => sp.GetRequiredService<IApprovalUI>()));
-
-                    // ask_user tool — same Lazy<ChatPanel> pattern to break circular dep
-                    services.AddSingleton(sp => new Lazy<ChatPanel>(() => sp.GetRequiredService<MainWindow>().ChatPanel));
-
-                    services.AddSingleton<IAgentTool, RunCommandTool>();
-                    services.AddSingleton<IAgentTool, AskUserTool>();
-                    services.AddSingleton<IChatService, ChatService>();
-                }
-
-                // factory so IChatService? resolves to null when not registered
                 services.AddSingleton<MainWindow>(sp => new MainWindow(
                     sp.GetRequiredService<ILogger<MainWindow>>(),
+                    sp.GetRequiredService<ILoggerFactory>(),
                     sp.GetRequiredService<IWindowsNative>(),
                     sp.GetRequiredService<ITerminal>(),
-                    sp.GetService<IChatService>(),
-                    sp.GetService<AgentEvents>()));
+                    sp.GetRequiredService<ISettingsService>(),
+                    startupError));
             })
             .Build();
 
         await _host.StartAsync();
 
+        // if key is valid, wire up AI immediately via ActivateAi
         var window = _host.Services.GetRequiredService<MainWindow>();
+        if (!string.IsNullOrEmpty(apiKey))
+            window.ActivateAi(apiKey);
         window.Show();
     }
 

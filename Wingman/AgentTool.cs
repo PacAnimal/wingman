@@ -25,7 +25,7 @@ public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IAppro
         // needs review — show approval card and wait for user decision
         var approved = await approvalUi.Value.RequestApprovalAsync(command, purpose, result.Reason);
         if (!approved)
-            return new CommandResult(command, "Command rejected by user", -1, false, "");
+            return new CommandResult(command, "Command rejected by user", -1, false, "", false);
 
         return await terminal.RunCommand(command);
     }

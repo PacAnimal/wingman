@@ -62,8 +62,9 @@ public class ChatService : IChatService
             "Do NOT repeat or quote raw command output — the user can see the terminal. " +
             "Summaries, findings, and conclusions are welcome; verbatim output is not.\n" +
             "- Always provide a clear, concise purpose string in the run_command call itself.\n" +
-            "- run_command returns structured JSON with: command, output, exitCode, success, and workingDirectory. " +
-            "Check exitCode and success to determine if a command succeeded.\n" +
+            "- run_command returns structured JSON with: command, output, exitCode, success, workingDirectory, and truncated. " +
+            "Check exitCode and success to determine if a command succeeded. " +
+            "If truncated is true, output was cut at 65,536 characters — consider re-running with a more targeted command to get the full data you need.\n" +
             "- If a command is rejected, briefly acknowledge it was rejected, then ask a clarifying question " +
             "or suggest an alternative — the user may have had a different intent in mind.\n" +
             "- If you cannot find something the user referred to (a file, folder, Office 365 group, user, resource, etc.), " +

@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Wingman;
 
-public record CommandResult(string Command, string Output, int ExitCode, bool Success, string WorkingDirectory);
+public record CommandResult(string Command, string Output, int ExitCode, bool Success, string WorkingDirectory, bool Truncated);
 
 public interface ITerminal
 {
@@ -23,6 +23,8 @@ public interface ITerminal
 
 public class Terminal(ILogger<Terminal> log) : ITerminal
 {
+    private const int MaxOutputLength = 65_536;
+
     private readonly SemaphoreSlimValue<StringBuilder> _outputBuffer = new(new StringBuilder(), disposeValue: false);
     private readonly Channel<bool> _sentinels = Channel.CreateUnbounded<bool>();
     private readonly SemaphoreSlim _commandLock = new(0, 1);
@@ -231,7 +233,10 @@ public class Terminal(ILogger<Terminal> log) : ITerminal
             var success = !bool.TryParse(exitParts.Length > 1 ? exitParts[1] : null, out var parsedSuccess) || parsedSuccess;
             var cwd = ExtractHiddenData(cwdRaw);
 
-            var result = new CommandResult(command, output.Trim(), exitCode, success, cwd);
+            var trimmed = output.Trim();
+            var truncated = trimmed.Length > MaxOutputLength;
+            if (truncated) trimmed = trimmed[..MaxOutputLength];
+            var result = new CommandResult(command, trimmed, exitCode, success, cwd, truncated);
             log.LogInformation("Command executed in {Elapsed}ms: {Command}", (int)sw.ElapsedMilliseconds, command);
             log.LogDebug("Command result: {Result}", JsonSerializer.Serialize(result));
             CommandCompleted?.Invoke();

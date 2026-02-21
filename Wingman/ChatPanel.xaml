@@ -62,14 +62,38 @@
             </TextBox>
         </Border>
 
-        <!-- disabled overlay when no API key -->
+        <!-- overlay: shown when no API key is configured -->
         <Grid Grid.Row="0" Grid.RowSpan="3" x:Name="DisabledOverlay"
               Visibility="Collapsed" Background="#CC1E1E1E">
-            <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
-                       Foreground="#888888" TextAlignment="Center"
-                       TextWrapping="Wrap" Margin="20" FontSize="13">
-                No OPENAI_API_KEY set.&#x0a;AI chat is unavailable.
-            </TextBlock>
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="360">
+                <TextBlock x:Name="OverlayMessage"
+                           Foreground="#FF4444" TextAlignment="Center"
+                           TextWrapping="Wrap" Margin="0,0,0,12" FontSize="13" />
+                <TextBox x:Name="ApiKeyBox"
+                         MaxLength="256"
+                         Background="#3C3C3C" Foreground="#CCCCCC"
+                         CaretBrush="#CCCCCC" SelectionBrush="#0E639C"
+                         FocusVisualStyle="{x:Null}" Padding="6,4"
+                         BorderThickness="1"
+                         FontFamily="Consolas" FontSize="13"
+                         PreviewKeyDown="ApiKeyBox_KeyDown">
+                    <TextBox.Style>
+                        <Style TargetType="TextBox">
+                            <Setter Property="BorderBrush" Value="Transparent" />
+                            <Style.Triggers>
+                                <Trigger Property="IsFocused" Value="True">
+                                    <Setter Property="BorderBrush" Value="#4A6785" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBox.Style>
+                </TextBox>
+                <TextBlock x:Name="OverlayStatus"
+                           Foreground="#666666" TextAlignment="Center"
+                           Margin="0,8,0,0" FontSize="11">
+                    Press Enter to submit
+                </TextBlock>
+            </StackPanel>
         </Grid>
 
         <!-- slash command completion popup -->

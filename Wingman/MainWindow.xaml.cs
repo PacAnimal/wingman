@@ -4,8 +4,10 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using EasyWindowsTerminalControl;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Terminal.Wpf;
+using OpenAI;
 
 namespace Wingman;
 
@@ -14,19 +16,23 @@ public partial class MainWindow
     private static readonly SolidColorBrush FocusBorderBrush = new(Color.FromRgb(0x4A, 0x67, 0x85));
 
     private readonly ILogger<MainWindow> _log;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly IWindowsNative _native;
     private readonly ITerminal _terminal;
+    private readonly ISettingsService _settings;
     private bool _alwaysOnTop;
     private FocusTarget _focusBeforeCard;
 
-    public MainWindow(ILogger<MainWindow> log, IWindowsNative native, ITerminal terminal, IChatService? chatService, AgentEvents? agentEvents)
+    public MainWindow(ILogger<MainWindow> log, ILoggerFactory loggerFactory, IWindowsNative native, ITerminal terminal, ISettingsService settings, string? startupError)
     {
         _log = log;
+        _loggerFactory = loggerFactory;
         _native = native;
         _terminal = terminal;
+        _settings = settings;
         InitializeComponent();
 
-        ChatPanel.Initialize(chatService, agentEvents);
+        ChatPanel.Initialize(null, null, startupError, OnApiKeySubmitted);
         ChatPanel.ResetRequested += async () => await _terminal.Reset();
         ChatPanel.CardActiveChanged += cardActive =>
         {
@@ -41,7 +47,7 @@ public partial class MainWindow
                 if (_focusBeforeCard == FocusTarget.Console)
                     Terminal.Focus();
                 else
-                    ChatPanel.InputTextBox.Focus();
+                    ChatPanel.FocusPrimaryInput();
             }
         };
 
@@ -63,7 +69,7 @@ public partial class MainWindow
 
         PreviewKeyDown += OnPreviewKeyDown;
         SourceInitialized += OnSourceInitialized;
-        Loaded += (_, _) => ChatPanel.InputTextBox.Focus();
+        Loaded += (_, _) => ChatPanel.FocusPrimaryInput();
         Closing += (_, _) => Hide();
 
         // cursor visibility + focus outline for terminal
@@ -91,6 +97,41 @@ public partial class MainWindow
         // connection is live, and Init awaits the command lock so the terminal is fully ready
         if (!Terminal.IsKeyboardFocusWithin)
             Terminal.IsCursorVisible = false;
+    }
+
+    private async Task<string?> OnApiKeySubmitted(string key)
+    {
+        var error = await _settings.ValidateKeyAsync(key);
+        if (error != null) return error;
+        await _settings.SaveKeyAsync(key);
+        ActivateAi(key);
+        return null;
+    }
+
+    internal void ActivateAi(string apiKey)
+    {
+        var openAiClient = new OpenAIClient(apiKey);
+
+        var chatClient = openAiClient.GetResponsesClient(Constants.ChatModel).AsIChatClient()
+            .AsBuilder().UseFunctionInvocation().Build();
+
+        var guardClient = openAiClient.GetResponsesClient(Constants.GuardModel).AsIChatClient();
+        var guard = new CommandGuard(guardClient, _loggerFactory.CreateLogger<CommandGuard>());
+
+        var events = new AgentEvents();
+        var approvalUi = new ApprovalUI(ChatPanel);
+        var lazyApproval = new Lazy<IApprovalUI>(() => approvalUi);
+        var lazyPanel = new Lazy<ChatPanel>(() => ChatPanel);
+
+        IAgentTool[] tools =
+        [
+            new RunCommandTool(_terminal, guard, lazyApproval, events),
+            new AskUserTool(lazyPanel, events),
+        ];
+
+        var chatService = new ChatService(chatClient, tools);
+        ChatPanel.Initialize(chatService, events, null, null);
+        ChatPanel.FocusPrimaryInput();
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
@@ -173,7 +214,7 @@ public partial class MainWindow
 
         // toggle focus between chat input and terminal
         if (ChatPanel.CurrentFocus == FocusTarget.Console)
-            ChatPanel.InputTextBox.Focus();
+            ChatPanel.FocusPrimaryInput();
         else
             Terminal.Focus();
     }
@@ -191,7 +232,7 @@ public partial class MainWindow
             if (ChatPanel.CurrentFocus == FocusTarget.Console)
                 Terminal.Focus();
             else
-                ChatPanel.InputTextBox.Focus();
+                ChatPanel.FocusPrimaryInput();
         });
     }
 

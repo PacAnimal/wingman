@@ -27,6 +27,8 @@ public partial class ChatPanel : UserControl
     private static readonly ControlTemplate CopyBtnTemplate = MakeCopyBtnTemplate();
 
     private IChatService? _chatService;
+    private AgentEvents? _agentEvents;
+    private Func<string, Task<string?>>? _onApiKeySubmitted;
     private bool _isStreaming;
     private CancellationTokenSource? _streamingCts;
     private volatile bool _needNewBubble;
@@ -140,17 +142,35 @@ public partial class ChatPanel : UserControl
         _hintTimer.Interval = TimeSpan.FromSeconds(15);
     }
 
-    public void Initialize(IChatService? chatService, AgentEvents? agentEvents)
+    public void Initialize(IChatService? chatService, AgentEvents? agentEvents, string? errorMessage = null, Func<string, Task<string?>>? onApiKeySubmitted = null)
     {
         _chatService = chatService;
-        if (chatService == null)
-            DisabledOverlay.Visibility = Visibility.Visible;
+        _onApiKeySubmitted = onApiKeySubmitted;
+
+        // detach old handler before attaching new one
+        if (_agentEvents != null)
+            _agentEvents.ToolStarted -= OnToolStarted;
+        _agentEvents = agentEvents;
 
         // each tool execution signals a bubble break; the flag is read on the UI thread
         // between chunks, so volatile is enough — no dispatcher needed
-        if (agentEvents != null)
-            agentEvents.ToolStarted += () => _needNewBubble = true;
+        if (_agentEvents != null)
+            _agentEvents.ToolStarted += OnToolStarted;
+
+        if (chatService == null)
+        {
+            OverlayMessage.Text = errorMessage ?? string.Empty;
+            DisabledOverlay.Visibility = Visibility.Visible;
+            ApiKeyBox.Focus();
+        }
+        else
+        {
+            DisabledOverlay.Visibility = Visibility.Collapsed;
+            _onApiKeySubmitted = null;
+        }
     }
+
+    private void OnToolStarted() => _needNewBubble = true;
 
     public event Action<bool>? CardActiveChanged;
     public bool HasActiveCard => _activeCard != null;
@@ -293,6 +313,14 @@ public partial class ChatPanel : UserControl
 
     public TextBox InputTextBox => InputBox;
 
+    public void FocusPrimaryInput()
+    {
+        if (DisabledOverlay.Visibility == Visibility.Visible)
+            ApiKeyBox.Focus();
+        else
+            InputBox.Focus();
+    }
+
     // panel-level handler: intercepts keys regardless of which child has focus
     private void Panel_PreviewKeyDown(object sender, KeyEventArgs e)
     {
@@ -313,6 +341,13 @@ public partial class ChatPanel : UserControl
 
         if (_pendingChoice != null && !IsModifierKey(e.Key))
         {
+            // shift+enter / ctrl+enter: ignore — user may confuse with approval card
+            if (e.Key == Key.Enter && Keyboard.Modifiers != ModifierKeys.None)
+            {
+                e.Handled = true;
+                return;
+            }
+
             var digit = KeyToDigit(e.Key);
             if (digit >= 1 && digit <= _pendingChoiceOptions!.Length)
             {
@@ -331,6 +366,28 @@ public partial class ChatPanel : UserControl
             else
                 ResolveApproval(false);
             e.Handled = true;
+        }
+    }
+
+    private async void ApiKeyBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || _onApiKeySubmitted == null) return;
+        e.Handled = true;
+
+        var key = ApiKeyBox.Text;
+        if (string.IsNullOrWhiteSpace(key)) return;
+
+        ApiKeyBox.IsEnabled = false;
+        OverlayStatus.Text = "Validating...";
+        OverlayMessage.Text = string.Empty;
+
+        var error = await _onApiKeySubmitted(key);
+        if (error != null)
+        {
+            OverlayMessage.Text = error;
+            OverlayStatus.Text = "Press Enter to submit";
+            ApiKeyBox.IsEnabled = true;
+            ApiKeyBox.Focus();
         }
     }
 
