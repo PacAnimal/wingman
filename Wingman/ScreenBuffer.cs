@@ -100,6 +100,13 @@ public class ScreenBuffer : IScreenBuffer
 
     private void WriteChar(char ch)
     {
+        // autowrap: terminal wraps at column boundary
+        if (_cursorCol >= _cols)
+        {
+            LineFeed();
+            _cursorCol = 0;
+        }
+
         var line = _lines[_cursorRow];
 
         // expand row if needed after a resize to wider cols
@@ -111,8 +118,7 @@ public class ScreenBuffer : IScreenBuffer
             line = expanded;
         }
 
-        if (_cursorCol < _cols)
-            line[_cursorCol++] = ch;
+        line[_cursorCol++] = ch;
     }
 
     private void LineFeed()
