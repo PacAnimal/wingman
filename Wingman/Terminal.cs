@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using System.Windows.Automation;
 using Cathedral.Extensions;
 using Cathedral.Utils;
 using EasyWindowsTerminalControl;
@@ -49,15 +51,19 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
 
         // initial viewport size matches the conPty.Start() call below
         screenBuffer.Resize(24, 80);
+        // debounce: wait 300ms after last resize, then wipe + repopulate from UIA
+        var resizeTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        resizeTimer.Tick += (_, _) =>
+        {
+            resizeTimer.Stop();
+            var t = terminalControl.Terminal;
+            screenBuffer.Resize(t?.Rows ?? 0, t?.Columns ?? 0);
+            RefreshScreenBufferFromUia();
+        };
         terminalControl.SizeChanged += (_, _) =>
         {
-            // defer read: SizeChanged fires before WM_WINDOWPOSCHANGED updates Rows/Columns
-            terminalControl.Dispatcher.BeginInvoke(() =>
-            {
-                var t = terminalControl.Terminal;
-                if (t != null && t.Rows > 0 && t.Columns > 0)
-                    screenBuffer.Resize(t.Rows, t.Columns);
-            });
+            resizeTimer.Stop();
+            resizeTimer.Start();
         };
 
         await InitCore(conPty);
@@ -116,13 +122,14 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
         conPty.InterceptOutputToUITerminal = (ref str) =>
         {
             if (_generation != gen) return;
-            var text = TermPTY.StripColors(str.ToString());
-            screenBuffer.Feed(text); // feed stripped text — avoids VT cursor-positioning noise
+            var raw = str.ToString();
+            screenBuffer.Feed(raw);           // raw ANSI for cursor tracking
+            var stripped = TermPTY.StripColors(raw);
             _termStarted.TrySetResult();
             using (var buf = _outputBuffer.WaitForDisposable().GetAwaiter().GetResult())
-                buf.Value.Append(text);
+                buf.Value.Append(stripped);
             var pos = 0;
-            while ((pos = text.IndexOf(FormattedSentinel, pos, StringComparison.Ordinal)) >= 0)
+            while ((pos = stripped.IndexOf(FormattedSentinel, pos, StringComparison.Ordinal)) >= 0)
             {
                 _sentinels.Writer.TryWrite(true);
                 pos += FormattedSentinel.Length;
@@ -285,6 +292,45 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
         foreach (var c in command.SaneSplit('\r', '\n'))
         {
             _term!.WriteToTerm(c + '\r');
+        }
+    }
+
+    // reflect into EasyWindowsTerminalControl internals to get the native terminal HWND
+    private IntPtr TryGetTerminalHwnd()
+    {
+        var terminal = _terminalControl?.Terminal;
+        if (terminal is null) return IntPtr.Zero;
+        // termContainer is an x:Name XAML field on TerminalControl (private in generated code)
+        var field = terminal.GetType().GetField("termContainer", BindingFlags.NonPublic | BindingFlags.Instance);
+        var container = field?.GetValue(terminal);
+        if (container is null) return IntPtr.Zero;
+        // TerminalContainer.Hwnd is internal — the native HWND created by NativeMethods.CreateTerminal()
+        var prop = container.GetType().GetProperty("Hwnd", BindingFlags.NonPublic | BindingFlags.Instance);
+        return prop?.GetValue(container) is IntPtr hwnd ? hwnd : IntPtr.Zero;
+    }
+
+    // read the visible viewport text via UIA and push it into the screen buffer
+    private void RefreshScreenBufferFromUia()
+    {
+        var hwnd = TryGetTerminalHwnd();
+        if (hwnd == IntPtr.Zero) return;
+        try
+        {
+            var element = AutomationElement.FromHandle(hwnd);
+            if (element.GetCurrentPattern(TextPattern.Pattern) is not TextPattern textPattern) return;
+            var ranges = textPattern.GetVisibleRanges();
+            if (ranges.Length == 0) return;
+            var sb = new StringBuilder();
+            for (var i = 0; i < ranges.Length; i++)
+            {
+                if (i > 0) sb.Append('\n');
+                sb.Append(ranges[i].GetText(-1).TrimEnd('\n', '\r'));
+            }
+            screenBuffer.FillFromText(sb.ToString());
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning(ex, "UIA screen refresh failed");
         }
     }
 }

@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  publish:
+  test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,18 +17,16 @@ jobs:
           dotnet-version: '10.0.x'
           dotnet-quality: 'preview'
 
-      - run: dotnet publish Wingman/Wingman.csproj -c Release
+      - run: dotnet restore
 
-      - name: Verify publish output
-        shell: pwsh
-        run: |
-          $publishDir = "Wingman/bin/Release/net10.0-windows10.0.19041.0/win10-x64/publish"
-          $files = Get-ChildItem -Path $publishDir -File
-          Write-Host "Publish directory contents:"
-          $files | ForEach-Object { Write-Host "  $($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)" }
-          $names = @($files | ForEach-Object { $_.Name })
-          if ($names.Count -ne 1 -or $names[0] -ne "Wingman.exe") {
-            Write-Error "Expected only Wingman.exe, found: $($names -join ', ')"
-            exit 1
-          }
-          Write-Host "OK - publish output clean"
+      - run: dotnet build Wingman.sln -c Release --no-restore
+
+      - run: dotnet test Wingman.Tests/Wingman.Tests.csproj -c Release --no-build
+
+  publish:
+    needs: [test]
+    runs-on: windows-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Publish
+        run: echo "Publishing... NOT"

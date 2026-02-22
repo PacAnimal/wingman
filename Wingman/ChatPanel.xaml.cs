@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Windows;
+using Cathedral.Utils;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -9,7 +10,7 @@ namespace Wingman;
 
 public enum FocusTarget { Input, Console, QuestionCard, ChatLogText }
 
-public partial class ChatPanel : UserControl
+public partial class ChatPanel
 {
     private static readonly string[] HintStrings =
     [
@@ -31,7 +32,7 @@ public partial class ChatPanel : UserControl
     private Func<string, Task<string?>>? _onApiKeySubmitted;
     private bool _isStreaming;
     private CancellationTokenSource? _streamingCts;
-    private volatile bool _needNewBubble;
+    private readonly Toggle _needNewBubble = new();
     private TypingIndicator? _typing;
     private TextBox? _currentBubble;
     private bool _currentBubbleHasContent;
@@ -170,7 +171,7 @@ public partial class ChatPanel : UserControl
         }
     }
 
-    private void OnToolStarted() => _needNewBubble = true;
+    private void OnToolStarted() => _needNewBubble.TrySet();
 
     public bool IsStreaming => _isStreaming;
 
@@ -210,7 +211,7 @@ public partial class ChatPanel : UserControl
             _currentBubbleHasContent = false;
             _typing?.Retarget(_currentBubble);
             _typing?.Start();
-            _needNewBubble = false;
+            _needNewBubble.TryReset();
         }
     }
 
@@ -501,7 +502,7 @@ public partial class ChatPanel : UserControl
                 // accepted tool ran — open a fresh bubble for the post-tool response
                 if (_needNewBubble)
                 {
-                    _needNewBubble = false;
+                    _needNewBubble.TryReset();
                     if (_currentBubbleHasContent)
                     {
                         _currentBubble = AddBubble("", isUser: false);

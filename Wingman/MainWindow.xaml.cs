@@ -37,7 +37,7 @@ public partial class MainWindow
         _screenBuffer = screenBuffer;
         InitializeComponent();
 
-        _spinner = new TitleSpinner(frame => UpdateTitle(frame));
+        _spinner = new TitleSpinner(UpdateTitle);
         TaskbarItemInfo = new System.Windows.Shell.TaskbarItemInfo();
 
         ChatPanel.Initialize(null, null, startupError, OnApiKeySubmitted);
