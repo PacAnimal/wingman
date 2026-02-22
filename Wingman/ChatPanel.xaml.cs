@@ -74,7 +74,7 @@ public partial class ChatPanel : UserControl
     {
         InitializeComponent();
 
-        InputBox.TextChanged += (_, _) => UpdateCompletionPopup();
+        InputBox.TextChanged += (_, _) => { UpdateCompletionPopup(); UserTyping?.Invoke(); };
         InputBox.GotFocus += (_, _) => CurrentFocus = FocusTarget.Input;
 
         // abort pending card if focus leaves the panel entirely (e.g. user switches to terminal)
@@ -172,6 +172,9 @@ public partial class ChatPanel : UserControl
 
     private void OnToolStarted() => _needNewBubble = true;
 
+    public bool IsStreaming => _isStreaming;
+
+    public event Action? UserTyping;
     public event Action<bool>? CardActiveChanged;
     public bool HasActiveCard => _activeCard != null;
 
@@ -476,6 +479,7 @@ public partial class ChatPanel : UserControl
 
         InputBox.Text = "";
         _isStreaming = true;
+        _agentEvents?.RaiseThinkingStarted();
 
         // start hint rotation while streaming (respects elapsed time in current 15s window)
         var remaining = TimeSpan.FromSeconds(15) - _hintWatch.Elapsed;
@@ -542,6 +546,7 @@ public partial class ChatPanel : UserControl
             _typing = null;
             _streamingCts?.Dispose();
             _streamingCts = null;
+            _agentEvents?.RaiseThinkingStopped();
             _isStreaming = false;
         }
     }

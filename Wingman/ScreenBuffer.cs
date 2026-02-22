@@ -9,9 +9,6 @@ public interface IScreenBuffer
     void Resize(int rows, int cols);
     void Reset();
     string GetVisibleText();
-    // diagnostic: total rows tracked in the scrollback (not just the visible viewport)
-    int LineCount { get; }
-    int ViewportRows { get; }
 }
 
 public class ScreenBuffer : IScreenBuffer
@@ -66,9 +63,6 @@ public class ScreenBuffer : IScreenBuffer
             _cursorCol = 0;
         }
     }
-
-    public int LineCount { get { lock (_lock) return _lines.Count; } }
-    public int ViewportRows { get { lock (_lock) return _rows; } }
 
     public string GetVisibleText()
     {

@@ -20,13 +20,17 @@ public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IAppro
         var result = await guard.EvaluateAsync(command, purpose);
 
         if (result.Verdict == CommandVerdict.Accepted)
+        {
+            events.RaiseCommandStarting();
             return await terminal.RunCommand(command);
+        }
 
         // needs review — show approval card and wait for user decision
         var approved = await approvalUi.Value.RequestApprovalAsync(command, purpose, result.Reason);
         if (!approved)
             return new CommandResult(command, "Command rejected by user", -1, false, "", false);
 
+        events.RaiseCommandStarting();
         return await terminal.RunCommand(command);
     }
 }

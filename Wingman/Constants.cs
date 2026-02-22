@@ -7,4 +7,9 @@ internal static class Constants
 
     internal const string ChatModel = "gpt-5.2";
     internal const string GuardModel = "gpt-5-mini";
+
+    internal const int SpinnerCommandIntervalMs = 200;
+    internal const int SpinnerThinkingMaxIntervalMs = 500;
+    internal const int TaskTypingIntervalMinutes = 5;
+    internal const int TaskFirstCommandDelaySeconds = 60;
 }

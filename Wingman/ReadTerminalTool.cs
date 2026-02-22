@@ -14,9 +14,6 @@ public class ReadTerminalTool(IScreenBuffer screenBuffer, AgentEvents events) : 
     private string ReadTerminal()
     {
         events.RaiseToolStarted();
-        var text = screenBuffer.GetVisibleText();
-        var lineCount = screenBuffer.LineCount;
-        var viewportRows = screenBuffer.ViewportRows;
-        return $"[buffer: {lineCount} total rows, viewport: {viewportRows} rows]\n{text}";
+        return screenBuffer.GetVisibleText();
     }
 }

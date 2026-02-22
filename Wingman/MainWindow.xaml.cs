@@ -21,6 +21,9 @@ public partial class MainWindow
     private readonly ITerminal _terminal;
     private readonly ISettingsService _settings;
     private readonly IScreenBuffer _screenBuffer;
+    private readonly TitleSpinner? _spinner;
+    private TaskDescriptionService? _taskDescription;
+    private bool _firstCommandSignaled;
     private bool _alwaysOnTop;
     private FocusTarget _focusBeforeCard;
 
@@ -34,8 +37,16 @@ public partial class MainWindow
         _screenBuffer = screenBuffer;
         InitializeComponent();
 
+        _spinner = new TitleSpinner(frame => UpdateTitle(frame));
+        TaskbarItemInfo = new System.Windows.Shell.TaskbarItemInfo();
+
         ChatPanel.Initialize(null, null, startupError, OnApiKeySubmitted);
-        ChatPanel.ResetRequested += async () => await _terminal.Reset();
+        ChatPanel.ResetRequested += async () =>
+        {
+            await _terminal.Reset();
+            _taskDescription?.Reset();
+            _firstCommandSignaled = false;
+        };
         ChatPanel.CardActiveChanged += cardActive =>
         {
             if (cardActive)
@@ -101,6 +112,21 @@ public partial class MainWindow
             Terminal.IsCursorVisible = false;
     }
 
+    private void UpdateTitle(char? frame)
+    {
+        var task = _taskDescription?.CurrentTask;
+        Title = (frame, task) switch
+        {
+            (char f, string t) => $"{f} Wingman - {t}",
+            (char f, null) => $"{f} Wingman",
+            (null, string t) => $"Wingman - {t}",
+            _ => "Wingman"
+        };
+        TaskbarItemInfo?.ProgressState = frame != null
+                ? System.Windows.Shell.TaskbarItemProgressState.Indeterminate
+                : System.Windows.Shell.TaskbarItemProgressState.None;
+    }
+
     private async Task<string?> OnApiKeySubmitted(string key)
     {
         var error = await _settings.ValidateKeyAsync(key);
@@ -133,6 +159,30 @@ public partial class MainWindow
         ];
 
         var chatService = new ChatService(ChatClientFactory, tools);
+
+        _taskDescription = new TaskDescriptionService();
+        _taskDescription.Start(guardClient, chatService, _screenBuffer);
+
+        events.ThinkingStarted += () => Dispatcher.BeginInvoke(() => _spinner!.StartThinking());
+        events.ThinkingStopped += () => Dispatcher.BeginInvoke(() => _spinner!.Stop());
+        events.CommandStarting += () => Dispatcher.BeginInvoke(() => _spinner!.StartCommand());
+
+        _terminal.CommandCompleted += () => Dispatcher.BeginInvoke(() =>
+        {
+            if (ChatPanel.IsStreaming)
+                _spinner?.StartThinking();
+            else
+                _spinner?.Stop();
+            if (!_firstCommandSignaled)
+            {
+                _firstCommandSignaled = true;
+                _taskDescription?.OnFirstCommandCompleted();
+            }
+        });
+
+        _taskDescription.TaskChanged += _ => Dispatcher.BeginInvoke(() => UpdateTitle(_spinner?.CurrentFrame));
+        ChatPanel.UserTyping += () => _taskDescription.OnUserTyping();
+
         ChatPanel.Initialize(chatService, events, null, null);
         ChatPanel.FocusPrimaryInput();
     }
