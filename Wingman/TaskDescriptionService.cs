@@ -10,8 +10,8 @@ sealed class TaskDescriptionService : IDisposable
     private IChatService? _chat;
     private IScreenBuffer? _screen;
     private readonly DispatcherTimer _typingTimer;
-    private DispatcherTimer? _firstCommandTimer;
-    private bool _firstCommandFired;
+    private TaskCompletionSource _firstCommandTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private CancellationTokenSource? _firstCommandCts;
     private bool _disposed;
 
     public event Action<string?>? TaskChanged;
@@ -28,7 +28,11 @@ sealed class TaskDescriptionService : IDisposable
         _client = client;
         _chat = chat;
         _screen = screen;
+        _firstCommandCts = new CancellationTokenSource();
+        _ = WaitForFirstCommandAsync(_firstCommandCts.Token);
     }
+
+    public void SignalFirstCommand() => _firstCommandTcs.TrySetResult();
 
     public void OnUserTyping()
     {
@@ -37,27 +41,29 @@ sealed class TaskDescriptionService : IDisposable
         _typingTimer.Start();
     }
 
-    public void OnFirstCommandCompleted()
-    {
-        if (_firstCommandFired || _client == null) return;
-        _firstCommandFired = true;
-        _firstCommandTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(Constants.TaskFirstCommandDelaySeconds) };
-        _firstCommandTimer.Tick += async (_, _) =>
-        {
-            _firstCommandTimer.Stop();
-            await GenerateAsync();
-        };
-        _firstCommandTimer.Start();
-    }
-
     public void Reset()
     {
         _typingTimer.Stop();
-        _firstCommandTimer?.Stop();
-        _firstCommandTimer = null;
-        _firstCommandFired = false;
+        _firstCommandCts?.Cancel();
+        _firstCommandTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _firstCommandCts = new CancellationTokenSource();
+        _ = WaitForFirstCommandAsync(_firstCommandCts.Token);
         CurrentTask = null;
         TaskChanged?.Invoke(null);
+    }
+
+    private async Task WaitForFirstCommandAsync(CancellationToken ct)
+    {
+        try
+        {
+            await _firstCommandTcs.Task.WaitAsync(ct);
+            await Task.Delay(TimeSpan.FromSeconds(Constants.TaskFirstCommandDelaySeconds), ct);
+            await GenerateAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            // reset or dispose cancelled us
+        }
     }
 
     private async Task GenerateAsync()
@@ -107,6 +113,6 @@ sealed class TaskDescriptionService : IDisposable
         if (_disposed) return;
         _disposed = true;
         _typingTimer.Stop();
-        _firstCommandTimer?.Stop();
+        _firstCommandCts?.Cancel();
     }
 }

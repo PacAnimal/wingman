@@ -11,7 +11,8 @@ public class ReadFileTool(Lazy<IApprovalUI> approvalUi, AgentEvents events) : IA
     public AIFunction AsAIFunction() => AIFunctionFactory.Create(
         (string path, int offset, int limit) => ReadFileAsync(path, offset, limit),
         "read_file",
-        "Reads a file and returns its contents with line numbers. Use offset and limit to page through large files. " +
+        "Reads a text file and returns its contents with line numbers. Use offset and limit to page through large files. " +
+        "Only works on text files; binary files (images, archives, executables) are refused with an error. " +
         "Much faster than run_command for reading files. Sensitive paths (credentials, keys, etc.) require user approval.");
 
     private async Task<string> ReadFileAsync(string path, int offset = 0, int limit = DefaultLimit)
@@ -30,6 +31,17 @@ public class ReadFileTool(Lazy<IApprovalUI> approvalUi, AgentEvents events) : IA
         {
             if (!File.Exists(path))
                 return $"Error: file not found: {path}";
+
+            try
+            {
+                var mime = MimeDetector.Detect(path);
+                if (!mime.IsText)
+                    return $"Error: {path} is a binary file ({mime.MimeType}). read_file only supports text files.";
+            }
+            catch
+            {
+                // detection failed — proceed; ReadAllLinesAsync will produce garbage on true binaries
+            }
 
             var allLines = await File.ReadAllLinesAsync(path);
             var totalLines = allLines.Length;

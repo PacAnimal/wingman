@@ -1,5 +1,4 @@
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -15,7 +14,6 @@ public partial class MainWindow
 {
     private static readonly SolidColorBrush FocusBorderBrush = new(Color.FromRgb(0x4A, 0x67, 0x85));
 
-    private readonly ILogger<MainWindow> _log;
     private readonly ILoggerFactory _loggerFactory;
     private readonly IWindowsNative _native;
     private readonly ITerminal _terminal;
@@ -23,13 +21,10 @@ public partial class MainWindow
     private readonly IScreenBuffer _screenBuffer;
     private readonly TitleSpinner? _spinner;
     private TaskDescriptionService? _taskDescription;
-    private bool _firstCommandSignaled;
-    private bool _alwaysOnTop;
     private FocusTarget _focusBeforeCard;
 
-    public MainWindow(ILogger<MainWindow> log, ILoggerFactory loggerFactory, IWindowsNative native, ITerminal terminal, ISettingsService settings, IScreenBuffer screenBuffer, string? startupError)
+    public MainWindow(ILoggerFactory loggerFactory, IWindowsNative native, ITerminal terminal, ISettingsService settings, IScreenBuffer screenBuffer, string? startupError)
     {
-        _log = log;
         _loggerFactory = loggerFactory;
         _native = native;
         _terminal = terminal;
@@ -45,7 +40,6 @@ public partial class MainWindow
         {
             await _terminal.Reset();
             _taskDescription?.Reset();
-            _firstCommandSignaled = false;
         };
         ChatPanel.CardActiveChanged += cardActive =>
         {
@@ -68,10 +62,11 @@ public partial class MainWindow
             MessageBox.Show("FAILED to load conpty.dll — ConPTY will not work.",
                 "Missing Native DLL", MessageBoxButton.OK, MessageBoxImage.Error);
 
-        // intercept ctrl+c before WM_KEYDOWN reaches the native terminal hwnd — selection is still
-        // active at this point; by the time InterceptInputToTermApp fires it's already cleared
-        ComponentDispatcher.ThreadPreprocessMessage += OnThreadPreprocessMessage;
-        Closed += (_, _) => ComponentDispatcher.ThreadPreprocessMessage -= OnThreadPreprocessMessage;
+        _native.HookPreprocessMessage(
+            () => ChatPanel.CurrentFocus == FocusTarget.ChatLogText,
+            () => Terminal.Terminal.GetSelectedText(),
+            () => Dispatcher.BeginInvoke(Terminal.Focus));
+        Closed += (_, _) => _native.UnhookPreprocessMessage();
 
         _terminal.ProcessExited += () => Dispatcher.BeginInvoke(Close);
         _terminal.CommandCompleted += () =>
@@ -117,9 +112,9 @@ public partial class MainWindow
         var task = _taskDescription?.CurrentTask;
         Title = (frame, task) switch
         {
-            (char f, string t) => $"{f} Wingman - {t}",
-            (char f, null) => $"{f} Wingman",
-            (null, string t) => $"Wingman - {t}",
+            ({ } f, { } t) => $"{f} Wingman - {t}",
+            ({ } f, null) => $"{f} Wingman",
+            (null, { } t) => $"Wingman - {t}",
             _ => "Wingman"
         };
         TaskbarItemInfo?.ProgressState = frame != null
@@ -139,9 +134,6 @@ public partial class MainWindow
     internal void ActivateAi(string apiKey)
     {
         var openAiClient = new OpenAIClient(apiKey);
-
-        IChatClient ChatClientFactory() => openAiClient.GetResponsesClient(Constants.ChatModel).AsIChatClient()
-            .AsBuilder().UseFunctionInvocation().Build();
 
         var guardClient = openAiClient.GetResponsesClient(Constants.GuardModel).AsIChatClient();
         var guard = new CommandGuard(guardClient, _loggerFactory.CreateLogger<CommandGuard>());
@@ -176,28 +168,22 @@ public partial class MainWindow
                 _spinner?.StartThinking();
             else
                 _spinner?.Stop();
-            if (!_firstCommandSignaled)
-            {
-                _firstCommandSignaled = true;
-                _taskDescription?.OnFirstCommandCompleted();
-            }
+            _taskDescription?.SignalFirstCommand();
         });
 
         _taskDescription.TaskChanged += _ => Dispatcher.BeginInvoke(() => UpdateTitle(_spinner?.CurrentFrame));
         ChatPanel.UserTyping += () => _taskDescription.OnUserTyping();
 
-        ChatPanel.Initialize(chatService, events, null, null);
+        ChatPanel.Initialize(chatService, events);
         ChatPanel.FocusPrimaryInput();
+        return;
+
+        IChatClient ChatClientFactory() => openAiClient.GetResponsesClient(Constants.ChatModel).AsIChatClient().AsBuilder().UseFunctionInvocation().Build();
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        _native.EnableDarkTitleBar(hwnd);
-        _native.AddAlwaysOnTopMenu(hwnd);
-
-        // hook WndProc for WM_SYSCOMMAND
-        HwndSource.FromHwnd(hwnd)?.AddHook(WndProc);
+        _native.InitializeWindow(new WindowInteropHelper(this).Handle, v => Topmost = v);
 
         // set terminal theme (campbell defaults, smaller font)
         Terminal.Theme = new TerminalTheme
@@ -214,19 +200,6 @@ public partial class MainWindow
                 0xFF783B, 0x9E00B4, 0xD6D661, 0xF2F2F2,
             ],
         };
-    }
-
-    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        const int WM_SYSCOMMAND = 0x0112;
-        if (msg == WM_SYSCOMMAND && ((uint)wParam & 0xFFF0) == WindowsNative.WM_SYSCOMMAND_ALWAYS_ON_TOP)
-        {
-            _alwaysOnTop = !_alwaysOnTop;
-            Topmost = _alwaysOnTop;
-            _native.ToggleAlwaysOnTopCheck(hwnd, _alwaysOnTop);
-            handled = true;
-        }
-        return IntPtr.Zero;
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
@@ -292,24 +265,4 @@ public partial class MainWindow
         });
     }
 
-    private void OnThreadPreprocessMessage(ref MSG msg, ref bool handled)
-    {
-        if (_native.IsCtrlCKeyDown(ref msg))
-        {
-            // let WPF route it to Panel_PreviewKeyDown for bubble text copy
-            if (ChatPanel.CurrentFocus == FocusTarget.ChatLogText) return;
-
-            var selected = Terminal.Terminal.GetSelectedText();
-            if (string.IsNullOrEmpty(selected)) return;
-
-            Clipboard.SetText(selected);
-            handled = true; // suppress ^C — don't let it reach the terminal
-            return;
-        }
-
-        // mouse click on the terminal's native HWND — WPF won't fire GotFocus, so force it
-        const int WM_LBUTTONDOWN = 0x0201;
-        if (msg.message == WM_LBUTTONDOWN && HwndSource.FromHwnd(msg.hwnd) == null)
-            Dispatcher.BeginInvoke(Terminal.Focus);
-    }
 }

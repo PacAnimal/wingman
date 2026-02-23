@@ -73,9 +73,7 @@ public partial class App : Application
                 services.AddSingleton<ITerminal, Terminal>();
                 services.AddSingleton<ISettingsService>(settings);
 
-                services.AddSingleton<MainWindow>(sp => new MainWindow(
-                    sp.GetRequiredService<ILogger<MainWindow>>(),
-                    sp.GetRequiredService<ILoggerFactory>(),
+                services.AddSingleton<MainWindow>(sp => new MainWindow(sp.GetRequiredService<ILoggerFactory>(),
                     sp.GetRequiredService<IWindowsNative>(),
                     sp.GetRequiredService<ITerminal>(),
                     sp.GetRequiredService<ISettingsService>(),

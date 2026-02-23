@@ -520,10 +520,11 @@ public partial class ChatPanel
                     }
                 }
 
-                // drain activity breadcrumbs enqueued from background tool threads
+                // drain activity breadcrumbs above the current bubble
+                var insertIdx = _currentBubble?.Parent is FrameworkElement fe && fe.Parent is UIElement bw ? MessagesPanel.Children.IndexOf(bw) : -1;
                 while (_pendingActivities.TryDequeue(out var activity))
                 {
-                    InsertElement(new TextBlock
+                    var tb = new TextBlock
                     {
                         Text = activity,
                         Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)),
@@ -531,8 +532,18 @@ public partial class ChatPanel
                         Margin = new Thickness(10, 2, 8, 2),
                         HorizontalAlignment = HorizontalAlignment.Left,
                         TextWrapping = TextWrapping.Wrap
-                    });
+                    };
+                    if (insertIdx >= 0)
+                    {
+                        MessagesPanel.Children.Insert(insertIdx, tb);
+                        insertIdx++;
+                    }
+                    else
+                    {
+                        InsertElement(tb);
+                    }
                 }
+                if (insertIdx > 0) ScrollToBottom();
 
                 if (!_currentBubbleHasContent)
                 {

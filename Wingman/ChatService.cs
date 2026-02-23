@@ -35,7 +35,8 @@ public class ChatService : IChatService
             "a tool and received the actual data. Do not guess, infer, or invent filesystem contents.\n\n" +
             "FILESYSTEM TOOLS — use these instead of run_command when just reading:\n" +
             "- list_directory: instant directory listing — prefer over `Get-ChildItem` in run_command.\n" +
-            "- read_file: reads a file with line numbers; supports offset/limit for paging large files. " +
+            "- read_file: reads a text file with line numbers; supports offset/limit for paging large files. " +
+            "Binary files (images, executables, archives, etc.) are refused — only text files are supported. " +
             "Prefer over `Get-Content` in run_command. Sensitive paths (credentials, keys, etc.) require user approval.\n" +
             "- write_file: writes text/config content to a file. Writing to $WMTMP is instant; " +
             "writing elsewhere requires user approval. " +

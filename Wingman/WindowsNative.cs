@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using EasyWindowsTerminalControl.Internals;
@@ -17,12 +18,22 @@ public interface IWindowsNative
     void EnableDarkTitleBar(IntPtr hwnd);
     void AddAlwaysOnTopMenu(IntPtr hwnd);
     void ToggleAlwaysOnTopCheck(IntPtr hwnd, bool isChecked);
+    void InitializeWindow(IntPtr hwnd, Action<bool> setTopmost);
+    void HookPreprocessMessage(Func<bool> isChatLogActive, Func<string?> getTerminalSelection, Action focusTerminal);
+    void UnhookPreprocessMessage();
 }
 
 public partial class WindowsNative : IWindowsNative
 {
     private const int WM_KEYDOWN = 0x0100;
     private const int VK_C = 0x43;
+    private const int WM_SYSCOMMAND = 0x0112;
+    private const int WM_LBUTTONDOWN = 0x0201;
+
+    private bool _alwaysOnTop;
+    private Func<bool>? _isChatLogActive;
+    private Func<string?>? _getTerminalSelection;
+    private Action? _focusTerminal;
 
     // system menu
     private const uint MF_STRING = 0x00000000;
@@ -80,6 +91,52 @@ public partial class WindowsNative : IWindowsNative
     {
         var menu = GetSystemMenu(hwnd, false);
         _ = CheckMenuItem(menu, WM_SYSCOMMAND_ALWAYS_ON_TOP, MF_BYCOMMAND | (isChecked ? MF_CHECKED : MF_UNCHECKED));
+    }
+
+    public void InitializeWindow(IntPtr hwnd, Action<bool> setTopmost)
+    {
+        EnableDarkTitleBar(hwnd);
+        AddAlwaysOnTopMenu(hwnd);
+        HwndSource.FromHwnd(hwnd)?.AddHook((h, msg, wp, lp, ref handled) => WndProc(h, msg, wp, lp, ref handled, setTopmost));
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr _, ref bool handled, Action<bool> setTopmost)
+    {
+        if (msg == WM_SYSCOMMAND && ((uint)wParam & 0xFFF0) == WM_SYSCOMMAND_ALWAYS_ON_TOP)
+        {
+            _alwaysOnTop = !_alwaysOnTop;
+            setTopmost(_alwaysOnTop);
+            ToggleAlwaysOnTopCheck(hwnd, _alwaysOnTop);
+            handled = true;
+        }
+        return IntPtr.Zero;
+    }
+
+    public void HookPreprocessMessage(Func<bool> isChatLogActive, Func<string?> getTerminalSelection, Action focusTerminal)
+    {
+        _isChatLogActive = isChatLogActive;
+        _getTerminalSelection = getTerminalSelection;
+        _focusTerminal = focusTerminal;
+        ComponentDispatcher.ThreadPreprocessMessage += OnPreprocessMessage;
+    }
+
+    public void UnhookPreprocessMessage() => ComponentDispatcher.ThreadPreprocessMessage -= OnPreprocessMessage;
+
+    private void OnPreprocessMessage(ref MSG msg, ref bool handled)
+    {
+        if (IsCtrlCKeyDown(ref msg))
+        {
+            // let WPF route it to Panel_PreviewKeyDown for bubble text copy
+            if (_isChatLogActive!()) return;
+            var selected = _getTerminalSelection!();
+            if (string.IsNullOrEmpty(selected)) return;
+            Clipboard.SetText(selected);
+            handled = true; // suppress ^C — don't let it reach the terminal
+            return;
+        }
+        // mouse click on the terminal's native HWND — WPF won't fire GotFocus, so force it
+        if (msg.message == WM_LBUTTONDOWN && HwndSource.FromHwnd(msg.hwnd) == null)
+            _focusTerminal!();
     }
 }
 

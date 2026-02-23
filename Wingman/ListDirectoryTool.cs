@@ -9,7 +9,7 @@ public class ListDirectoryTool(AgentEvents events) : IAgentTool
     public AIFunction AsAIFunction() => AIFunctionFactory.Create(
         (string path) => ListDirectory(path),
         "list_directory",
-        "Lists the contents of a directory. Returns each entry prefixed with [DIR] or [FILE], sorted directories first then alphabetically. Much faster than run_command for browsing the filesystem.");
+        "Lists the contents of a directory. Returns each entry prefixed with [DIR] or [FILE] with mime type and size, sorted directories first then alphabetically. Much faster than run_command for browsing the filesystem.");
 
     private string ListDirectory(string path)
     {
@@ -28,7 +28,10 @@ public class ListDirectoryTool(AgentEvents events) : IAgentTool
             foreach (var d in dirs)
                 sb.AppendLine($"[DIR]  {d.Name}");
             foreach (var f in files)
-                sb.AppendLine($"[FILE] {f.Name} ({FormatSize(f.Length)})");
+            {
+                var mime = SafeDetect(f.FullName);
+                sb.AppendLine($"[FILE] {f.Name} ({mime}, {FormatSize(f.Length)})");
+            }
 
             return sb.Length == 0 ? "(empty directory)" : sb.ToString().TrimEnd();
         }
@@ -40,6 +43,12 @@ public class ListDirectoryTool(AgentEvents events) : IAgentTool
         {
             return $"Error: {ex.Message}";
         }
+    }
+
+    private static string SafeDetect(string path)
+    {
+        try { return MimeDetector.Detect(path).MimeType; }
+        catch { return "unknown"; }
     }
 
     private static string FormatSize(long bytes) => bytes switch
