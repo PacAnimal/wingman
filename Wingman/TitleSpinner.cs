@@ -2,7 +2,7 @@ using System.Windows.Threading;
 
 namespace Wingman;
 
-sealed class TitleSpinner : IDisposable
+internal sealed class TitleSpinner : IDisposable
 {
     private enum SpinMode { Idle, Command, Thinking }
 
