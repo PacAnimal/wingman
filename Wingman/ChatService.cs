@@ -81,8 +81,15 @@ public class ChatService : IChatService
             "SCRATCH DIRECTORY:\n" +
             "- $WMTMP is a per-session scratch directory for temporary files. Use it freely for intermediate work.\n" +
             "- NEVER change the value of $WMTMP — it is a constant set by Wingman.\n" +
-            "- Clean up files you create in $WMTMP when you no longer need them."));
-        _options = new ChatOptions { Tools = [.. tools.Select(t => t.AsAIFunction())] };
+            "- Clean up files you create in $WMTMP when you no longer need them.\n\n" +
+            "WEB SEARCH:\n" +
+            "- You have automatic access to web search. When answering questions or performing tasks, " +
+            "actively search the web to retrieve up-to-date information about tools, software versions, " +
+            "best practices, documentation, APIs, and similar topics.\n" +
+            "- Do not rely solely on your training data when current information matters — " +
+            "search first, then act on what you find.\n" +
+            "- You do not need to call any tool explicitly — the system searches automatically when your response requires it."));
+        _options = new ChatOptions { Tools = [.. tools.Select(t => t.AsAIFunction()), new HostedWebSearchTool()] };
     }
 
     public async IAsyncEnumerable<string> SendMessageAsync(string userMessage,
