@@ -6,7 +6,7 @@ sealed class TitleSpinner : IDisposable
 {
     private enum SpinMode { Idle, Command, Thinking }
 
-    private static readonly char[] Frames = ['◐', '◓', '◑', '◒'];
+    private static readonly char[] Frames = ['⠋', '⠙', '⠹', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
     private readonly DispatcherTimer _timer;
     private readonly Action<char?> _callback;
@@ -28,7 +28,7 @@ sealed class TitleSpinner : IDisposable
     {
         _mode = SpinMode.Command;
         _timer.Stop();
-        _timer.Interval = TimeSpan.FromMilliseconds(Constants.SpinnerCommandIntervalMs);
+        _timer.Interval = TimeSpan.FromMilliseconds(Constants.SpinnerCommandFrameMs);
         _timer.Start();
         _callback(CurrentFrame);
     }
@@ -50,8 +50,8 @@ sealed class TitleSpinner : IDisposable
 
     private void StartNewBurst()
     {
-        var burstMs = Random.Shared.Next(500, 3001);
-        var intervalMs = Random.Shared.Next(100, Constants.SpinnerThinkingMaxIntervalMs + 1);
+        var burstMs = Random.Shared.Next(Constants.SpinnerThinkingMinSpeedSwitchIntervalMs, Constants.SpinnerThinkingMaxSpeedSwitchIntervalMs + 1);
+        var intervalMs = Random.Shared.Next(Constants.SpinnerThinkingMinFrameMs, Constants.SpinnerThinkingMaxFrameMs + 1);
         _burstEnd = DateTime.UtcNow.AddMilliseconds(burstMs);
         _timer.Interval = TimeSpan.FromMilliseconds(intervalMs);
         _timer.Start();
