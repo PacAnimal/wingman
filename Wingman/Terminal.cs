@@ -19,6 +19,7 @@ public interface ITerminal
     Task Init(EasyTerminalControl terminalControl);
     Task Reset();
     Task<CommandResult> RunCommand(string command);
+    string ScratchDir { get; }
     event Action? ProcessExited;
     event Action? CommandCompleted;
 }
@@ -36,6 +37,8 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
     private EasyTerminalControl? _terminalControl;
     private int _generation;
     private CancellationTokenSource? _resetCts;
+
+    public string ScratchDir => _scratchDir ?? throw new InvalidOperationException("Terminal not ready");
 
     public event Action? ProcessExited;
     public event Action? CommandCompleted;

@@ -156,6 +156,9 @@ public partial class MainWindow
             new RunCommandTool(_terminal, guard, lazyApproval, events),
             new AskUserTool(lazyPanel, events),
             new ReadTerminalTool(_screenBuffer, events),
+            new ListDirectoryTool(events),
+            new ReadFileTool(lazyApproval, events),
+            new WriteFileTool(_terminal, lazyApproval, events),
         ];
 
         var chatService = new ChatService(ChatClientFactory, tools);

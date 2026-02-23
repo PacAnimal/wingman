@@ -1,0 +1,52 @@
+using System.IO;
+using System.Text;
+using Microsoft.Extensions.AI;
+
+namespace Wingman;
+
+public class ListDirectoryTool(AgentEvents events) : IAgentTool
+{
+    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+        (string path) => ListDirectory(path),
+        "list_directory",
+        "Lists the contents of a directory. Returns each entry prefixed with [DIR] or [FILE], sorted directories first then alphabetically. Much faster than run_command for browsing the filesystem.");
+
+    private string ListDirectory(string path)
+    {
+        events.RaiseToolActivity("List " + path);
+        try
+        {
+            var dir = new DirectoryInfo(path);
+            if (!dir.Exists)
+                return $"Error: directory not found: {path}";
+
+            var entries = dir.GetFileSystemInfos();
+            var dirs = entries.OfType<DirectoryInfo>().OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase);
+            var files = entries.OfType<FileInfo>().OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase);
+
+            var sb = new StringBuilder();
+            foreach (var d in dirs)
+                sb.AppendLine($"[DIR]  {d.Name}");
+            foreach (var f in files)
+                sb.AppendLine($"[FILE] {f.Name} ({FormatSize(f.Length)})");
+
+            return sb.Length == 0 ? "(empty directory)" : sb.ToString().TrimEnd();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return $"Error: access denied: {path}";
+        }
+        catch (Exception ex)
+        {
+            return $"Error: {ex.Message}";
+        }
+    }
+
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:F1} KB",
+        < 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
+        _ => $"{bytes / (1024.0 * 1024 * 1024):F1} GB"
+    };
+}

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Windows;
 using Cathedral.Utils;
@@ -29,6 +30,7 @@ public partial class ChatPanel
 
     private IChatService? _chatService;
     private AgentEvents? _agentEvents;
+    private readonly ConcurrentQueue<string> _pendingActivities = new();
     private Func<string, Task<string?>>? _onApiKeySubmitted;
     private bool _isStreaming;
     private CancellationTokenSource? _streamingCts;
@@ -148,15 +150,21 @@ public partial class ChatPanel
         _chatService = chatService;
         _onApiKeySubmitted = onApiKeySubmitted;
 
-        // detach old handler before attaching new one
+        // detach old handlers before attaching new ones
         if (_agentEvents != null)
+        {
             _agentEvents.ToolStarted -= OnToolStarted;
+            _agentEvents.ToolActivity -= OnToolActivity;
+        }
         _agentEvents = agentEvents;
 
         // each tool execution signals a bubble break; the flag is read on the UI thread
         // between chunks, so volatile is enough — no dispatcher needed
         if (_agentEvents != null)
+        {
             _agentEvents.ToolStarted += OnToolStarted;
+            _agentEvents.ToolActivity += OnToolActivity;
+        }
 
         if (chatService == null)
         {
@@ -172,6 +180,7 @@ public partial class ChatPanel
     }
 
     private void OnToolStarted() => _needNewBubble.TrySet();
+    private void OnToolActivity(string message) => _pendingActivities.Enqueue(message);
 
     public bool IsStreaming => _isStreaming;
 
@@ -509,6 +518,20 @@ public partial class ChatPanel
                         _currentBubbleHasContent = false;
                         _typing.Retarget(_currentBubble);
                     }
+                }
+
+                // drain activity breadcrumbs enqueued from background tool threads
+                while (_pendingActivities.TryDequeue(out var activity))
+                {
+                    InsertElement(new TextBlock
+                    {
+                        Text = activity,
+                        Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)),
+                        FontSize = 11,
+                        Margin = new Thickness(10, 2, 8, 2),
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        TextWrapping = TextWrapping.Wrap
+                    });
                 }
 
                 if (!_currentBubbleHasContent)

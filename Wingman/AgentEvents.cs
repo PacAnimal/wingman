@@ -8,11 +8,13 @@ public sealed class AgentEvents
 {
     // fired from background threads — subscribers must be thread-safe
     public event Action? ToolStarted;
+    public event Action<string>? ToolActivity;
     public event Action? ThinkingStarted;
     public event Action? ThinkingStopped;
     public event Action? CommandStarting;
 
     internal void RaiseToolStarted() => ToolStarted?.Invoke();
+    internal void RaiseToolActivity(string message) { ToolStarted?.Invoke(); ToolActivity?.Invoke(message); }
     internal void RaiseThinkingStarted() => ThinkingStarted?.Invoke();
     internal void RaiseThinkingStopped() => ThinkingStopped?.Invoke();
     internal void RaiseCommandStarting() => CommandStarting?.Invoke();
