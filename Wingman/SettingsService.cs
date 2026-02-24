@@ -12,6 +12,8 @@ public interface ISettingsService
     Task<WingmanSettings> LoadAsync(CancellationToken ct = default);
     Task SaveKeyAsync(string key, CancellationToken ct = default);
     Task<string?> ValidateKeyAsync(string key, CancellationToken ct = default);
+    Task<List<string>> GetMemoriesAsync(CancellationToken ct = default);
+    Task UpdateMemoriesAsync(Action<List<string>> update, CancellationToken ct = default);
 }
 
 public class SettingsService : ISettingsService
@@ -35,6 +37,15 @@ public class SettingsService : ISettingsService
 
     public Task SaveKeyAsync(string key, CancellationToken ct = default) =>
         _store.Update(s => s.OpenAiApiKey = key, ct);
+
+    public async Task<List<string>> GetMemoriesAsync(CancellationToken ct = default)
+    {
+        var s = await _store.Read(ct);
+        return s.Memories ?? [];
+    }
+
+    public Task UpdateMemoriesAsync(Action<List<string>> update, CancellationToken ct = default) =>
+        _store.Update(s => { s.Memories ??= []; update(s.Memories); }, ct);
 
     public async Task<string?> ValidateKeyAsync(string key, CancellationToken ct = default)
     {

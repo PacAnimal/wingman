@@ -20,7 +20,7 @@ public class ChatService : IChatService
 
     public IReadOnlyList<ChatMessage> History => _history;
 
-    public ChatService(Func<IChatClient> clientFactory, IEnumerable<IAgentTool> tools)
+    public ChatService(Func<IChatClient> clientFactory, IEnumerable<IAgentTool> tools, string memoryBlock)
     {
         _clientFactory = clientFactory;
         _client = clientFactory();
@@ -88,7 +88,16 @@ public class ChatService : IChatService
             "best practices, documentation, APIs, and similar topics.\n" +
             "- Do not rely solely on your training data when current information matters — " +
             "search first, then act on what you find.\n" +
-            "- You do not need to call any tool explicitly — the system searches automatically when your response requires it."));
+            "- You do not need to call any tool explicitly — the system searches automatically when your response requires it.\n\n" +
+            "MEMORY:\n" +
+            "- You have persistent memory across sessions via save_memory, delete_memory, update_memory, and list_memory tools.\n" +
+            "- After discovering useful environment facts (installed tools, versions, modules, user preferences, common paths), save them with save_memory.\n" +
+            "- Keep memories short — one concise line per fact.\n" +
+            "- After discovering useful environment facts, save them with save_memory.\n" +
+            "- If you discover a saved memory is inaccurate, delete or update it immediately.\n" +
+            "- When you have 90+ memories, proactively prune: merge related memories, delete obsolete ones, and compress verbose memories into concise facts.\n" +
+            "- Do NOT save conversation-specific context — only durable environment facts." +
+            (memoryBlock.Length == 0 ? "" : "\n\n" + memoryBlock)));
         _options = new ChatOptions { Tools = [.. tools.Select(t => t.AsAIFunction()), new HostedWebSearchTool()] };
     }
 

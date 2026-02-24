@@ -84,7 +84,7 @@ public partial class WindowsNative : IWindowsNative
     {
         var menu = GetSystemMenu(hwnd, false);
         AppendMenu(menu, MF_SEPARATOR, 0, null);
-        AppendMenu(menu, MF_STRING, WM_SYSCOMMAND_ALWAYS_ON_TOP, "Always on Top");
+        AppendMenu(menu, MF_STRING, WM_SYSCOMMAND_ALWAYS_ON_TOP, "Always on top");
     }
 
     public void ToggleAlwaysOnTopCheck(IntPtr hwnd, bool isChecked)

@@ -12,7 +12,9 @@ using Microsoft.Extensions.Logging;
 
 namespace Wingman;
 
+// ReSharper disable NotAccessedPositionalProperty.Global
 public record CommandResult(string Command, string Output, int ExitCode, bool Success, string WorkingDirectory, bool Truncated);
+// ReSharper restore NotAccessedPositionalProperty.Global
 
 public interface ITerminal
 {

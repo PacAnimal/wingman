@@ -132,16 +132,19 @@ public partial class MainWindow
         var error = await _settings.ValidateKeyAsync(key);
         if (error != null) return error;
         await _settings.SaveKeyAsync(key);
-        ActivateAi(key);
+        await ActivateAi(key);
         return null;
     }
 
-    internal void ActivateAi(string apiKey)
+    internal async Task ActivateAi(string apiKey)
     {
         var openAiClient = new OpenAIClient(apiKey);
 
         var guardClient = openAiClient.GetResponsesClient(Constants.GuardModel).AsIChatClient();
         var guard = new CommandGuard(guardClient, _loggerFactory.CreateLogger<CommandGuard>());
+
+        var memory = new MemoryService(_settings);
+        var memoryBlock = await memory.FormatForSystemPrompt();
 
         var events = new AgentEvents();
         var approvalUi = new ApprovalUI(ChatPanel);
@@ -156,9 +159,13 @@ public partial class MainWindow
             new ListDirectoryTool(events),
             new ReadFileTool(lazyApproval, events),
             new WriteFileTool(_terminal, lazyApproval, events),
+            new SaveMemoryTool(memory, events),
+            new DeleteMemoryTool(memory, events),
+            new UpdateMemoryTool(memory, events),
+            new ListMemoryTool(memory, events),
         ];
 
-        var chatService = new ChatService(ChatClientFactory, tools);
+        var chatService = new ChatService(ChatClientFactory, tools, memoryBlock);
 
         _taskDescription = new TaskDescriptionService();
         _taskDescription.Start(guardClient, chatService, _screenBuffer);
@@ -179,7 +186,7 @@ public partial class MainWindow
         _taskDescription.TaskChanged += _ => Dispatcher.BeginInvoke(() => UpdateTitle(_spinner?.CurrentFrame));
         ChatPanel.UserTyping += () => _taskDescription.OnUserTyping();
 
-        ChatPanel.Initialize(chatService, events);
+        ChatPanel.Initialize(chatService, events, memory: memory);
         ChatPanel.FocusPrimaryInput();
         return;
 
@@ -243,7 +250,9 @@ public partial class MainWindow
             }
         }
 
-        if (e.Key != Key.Space || (Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
+        var isCtrlSpace = e.Key == Key.Space && (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+        var isCtrlTab = e.Key == Key.Tab && (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+        if (!isCtrlSpace && !isCtrlTab) return;
         e.Handled = true;
 
         // block toggle while a card needs user input

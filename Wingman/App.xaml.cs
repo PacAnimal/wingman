@@ -87,7 +87,7 @@ public partial class App : Application
         // if key is valid, wire up AI immediately via ActivateAi
         var window = _host.Services.GetRequiredService<MainWindow>();
         if (!string.IsNullOrEmpty(apiKey))
-            window.ActivateAi(apiKey);
+            await window.ActivateAi(apiKey);
         window.Show();
     }
 

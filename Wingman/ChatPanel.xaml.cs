@@ -15,7 +15,7 @@ public partial class ChatPanel
 {
     private static readonly string[] HintStrings =
     [
-        "Hit Ctrl+Space switches focus",
+        "Hit Ctrl+Space or Ctrl+Tab switches focus",
         "Hit Press Esc to cancel the AI",
         "Hit Ctrl+Enter for a new line",
         "Type /reset to start fresh",
@@ -23,13 +23,16 @@ public partial class ChatPanel
         "Ctrl+Arrow keys resize the panels",
     ];
 
-    private static readonly string[] SlashCommandNames = ["/reset"];
+    private static readonly string[] SlashCommandNames = ["/reset", "/memory", "/forget"];
+    private static readonly string[] ForgetCompletions =
+        ["/forget everything", .. Enumerable.Range(1, 9).Select(i => $"/forget {i}")];
 
     private static readonly ControlTemplate BubbleTextTemplate = MakeBubbleTextTemplate();
     private static readonly ControlTemplate CopyBtnTemplate = MakeCopyBtnTemplate();
 
     private IChatService? _chatService;
     private AgentEvents? _agentEvents;
+    private IMemoryService? _memory;
     private readonly ConcurrentQueue<string> _pendingActivities = new();
     private Func<string, Task<string?>>? _onApiKeySubmitted;
     private bool _isStreaming;
@@ -145,9 +148,10 @@ public partial class ChatPanel
         _hintTimer.Interval = TimeSpan.FromSeconds(15);
     }
 
-    public void Initialize(IChatService? chatService, AgentEvents? agentEvents, string? errorMessage = null, Func<string, Task<string?>>? onApiKeySubmitted = null)
+    public void Initialize(IChatService? chatService, AgentEvents? agentEvents, string? errorMessage = null, Func<string, Task<string?>>? onApiKeySubmitted = null, IMemoryService? memory = null)
     {
         _chatService = chatService;
+        _memory = memory;
         _onApiKeySubmitted = onApiKeySubmitted;
 
         // detach old handlers before attaching new ones
@@ -286,14 +290,51 @@ public partial class ChatPanel
 
     private async Task<bool> TryExecuteSlashCommand(string text)
     {
-        if (!text.Equals("/reset", StringComparison.OrdinalIgnoreCase)) return false;
-        CancelStreaming();
-        _chatService?.ClearHistory();
-        MessagesPanel.Children.Clear();
-        if (ResetRequested != null)
-            await ResetRequested.Invoke();
-        return true;
+        if (text.Equals("/reset", StringComparison.OrdinalIgnoreCase))
+        {
+            CancelStreaming();
+            _chatService?.ClearHistory();
+            MessagesPanel.Children.Clear();
+            if (ResetRequested != null)
+                await ResetRequested.Invoke();
+            return true;
+        }
+
+        if (text.Equals("/memory", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_memory == null) return false;
+            var list = await _memory.ListMemoriesAsync();
+            InsertElement(MakeStatusText(list));
+            return true;
+        }
+
+        if (text.StartsWith("/forget", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_memory == null) return false;
+            var arg = text["/forget".Length..].Trim();
+            string result;
+            if (arg.Equals("everything", StringComparison.OrdinalIgnoreCase))
+                result = await _memory.DeleteAllAsync();
+            else if (int.TryParse(arg, out var n))
+                result = await _memory.DeleteMemoryAsync(n);
+            else
+                return false;
+            InsertElement(MakeStatusText(result));
+            return true;
+        }
+
+        return false;
     }
+
+    private static TextBlock MakeStatusText(string text) => new()
+    {
+        Text = text,
+        Foreground = new SolidColorBrush(Color.FromRgb(0x66, 0x66, 0x66)),
+        FontSize = 11,
+        Margin = new Thickness(10, 2, 8, 2),
+        HorizontalAlignment = HorizontalAlignment.Left,
+        TextWrapping = TextWrapping.Wrap,
+    };
 
     private void UpdateCompletionPopup()
     {
@@ -301,7 +342,10 @@ public partial class ChatPanel
         var text = InputBox.Text;
         if (text.StartsWith('/'))
         {
-            var matches = SlashCommandNames
+            var pool = text.StartsWith("/forget ", StringComparison.OrdinalIgnoreCase)
+                ? ForgetCompletions
+                : SlashCommandNames;
+            var matches = pool
                 .Where(c => c.StartsWith(text, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
             if (matches.Length > 0)
