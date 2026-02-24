@@ -6,7 +6,7 @@ An AI-powered PowerShell terminal assistant for Windows. Chat with an AI that ex
 
 ## What it is
 
-Wingman is a WPF desktop app with a split-pane layout: an AI chat panel on the left, a GPU-rendered PowerShell terminal on the right. The AI runs commands directly in your live terminal session — the same session you can type in yourself — so it inherits your logins, variables, and working directory. It's not a chatbot that pretends to run commands; it actually runs them.
+Wingman is a WPF desktop app with a split-pane layout: an AI chat panel on the left, a GPU-rendered PowerShell terminal on the right. The AI runs commands directly in your live terminal session — the same session you can type in yourself — so it inherits your logins, variables, and working directory. It's not a chatbot that runs commands in the background; it cooperates with you and shares your terminal.
 
 ## Features
 
