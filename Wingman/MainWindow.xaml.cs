@@ -76,6 +76,11 @@ public partial class MainWindow
         };
 
         PreviewKeyDown += OnPreviewKeyDown;
+        PreviewMouseUp += (_, _) =>
+        {
+            if (ChatPanel.HasActiveCard)
+                Dispatcher.BeginInvoke(ChatPanel.FocusActiveCard, System.Windows.Threading.DispatcherPriority.Input);
+        };
         SourceInitialized += OnSourceInitialized;
         Loaded += (_, _) => ChatPanel.FocusPrimaryInput();
         Closing += (_, _) => Hide();
@@ -212,7 +217,10 @@ public partial class MainWindow
                 e.Handled = true;
                 return;
             }
-            if (!ChatPanel.HasActiveCard && ChatPanel.CancelStreaming()) { e.Handled = true; return; }
+            var handled = false;
+            if (!ChatPanel.HasActiveCard && ChatPanel.CancelStreaming()) handled = true;
+            if (_terminal.IsCommandRunning) { _terminal.SendCtrlC(); handled = true; }
+            if (handled) { e.Handled = true; return; }
         }
 
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)

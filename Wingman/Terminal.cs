@@ -19,6 +19,8 @@ public interface ITerminal
     Task Init(EasyTerminalControl terminalControl);
     Task Reset();
     Task<CommandResult> RunCommand(string command);
+    bool IsCommandRunning { get; }
+    void SendCtrlC();
     string ScratchDir { get; }
     event Action? ProcessExited;
     event Action? CommandCompleted;
@@ -37,8 +39,11 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
     private EasyTerminalControl? _terminalControl;
     private int _generation;
     private CancellationTokenSource? _resetCts;
+    private volatile bool _commandRunning;
 
     public string ScratchDir => _scratchDir ?? throw new InvalidOperationException("Terminal not ready");
+    public bool IsCommandRunning => _commandRunning;
+    public void SendCtrlC() => _term?.WriteToTerm("\x03");
 
     public event Action? ProcessExited;
     public event Action? CommandCompleted;
@@ -209,65 +214,72 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
         if (_term is null) throw new InvalidOperationException("Terminal not ready");
 
         using var _ = await _commandLock.WaitForDisposable();
-
-        // gobble stale sentinels from user interaction or background prompt renders
-        var drained = 0;
-        while (_sentinels.Reader.TryRead(out var stale)) drained++;
-        if (drained > 0) log.LogDebug("Drained {Count} stale sentinel(s)", drained);
-
-        int offset;
-        using (var buf = await _outputBuffer.WaitForDisposable())
-            offset = buf.Value.Length;
-
-        var sw = Stopwatch.StartNew();
-        WriteCommand(command);
-
-        // wait until all 3 sentinels appear in buffer after offset; cancellable via reset or timeout
-        using var timeout = new CancellationTokenSource(Constants.CommandTimeoutMs);
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, _resetCts!.Token);
-        var sentinelLen = FormattedSentinel.Length;
-
-        while (true)
+        _commandRunning = true;
+        try
         {
-            await _sentinels.Reader.ReadAsync(linked.Token);
+            // gobble stale sentinels from user interaction or background prompt renders
+            var drained = 0;
+            while (_sentinels.Reader.TryRead(out var stale)) drained++;
+            if (drained > 0) log.LogDebug("Drained {Count} stale sentinel(s)", drained);
 
-            string buffer;
-            using (var buf = await _outputBuffer.WaitForDisposable(linked.Token))
-                buffer = buf.Value.ToString();
+            int offset;
+            using (var buf = await _outputBuffer.WaitForDisposable())
+                offset = buf.Value.Length;
 
-            var s1 = buffer.IndexOf(FormattedSentinel, offset, StringComparison.Ordinal);
-            if (s1 < 0) continue;
-            var s2 = buffer.IndexOf(FormattedSentinel, s1 + sentinelLen, StringComparison.Ordinal);
-            if (s2 < 0) continue;
-            var s3 = buffer.IndexOf(FormattedSentinel, s2 + sentinelLen, StringComparison.Ordinal);
-            if (s3 < 0) continue;
+            var sw = Stopwatch.StartNew();
+            WriteCommand(command);
 
-            var output = buffer[offset..s1];
-            var exitRaw = buffer[(s1 + sentinelLen)..s2];
-            var cwdRaw = buffer[(s2 + sentinelLen)..s3];
+            // wait until all 3 sentinels appear in buffer after offset; cancellable via reset or timeout
+            using var timeout = new CancellationTokenSource(Constants.CommandTimeoutMs);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, _resetCts!.Token);
+            var sentinelLen = FormattedSentinel.Length;
 
-            // trim consumed portion to prevent indefinite growth
-            using (var buf = await _outputBuffer.WaitForDisposable(linked.Token))
-                buf.Value.Remove(0, s3 + sentinelLen);
+            while (true)
+            {
+                await _sentinels.Reader.ReadAsync(linked.Token);
 
-            // strip the echoed command (first line)
-            var firstNewline = output.IndexOf('\n');
-            if (firstNewline >= 0) output = output[(firstNewline + 1)..];
+                string buffer;
+                using (var buf = await _outputBuffer.WaitForDisposable(linked.Token))
+                    buffer = buf.Value.ToString();
 
-            // parse exit status: "0|True" or "1|False"
-            var exitParts = ExtractHiddenData(exitRaw).Split('|');
-            var exitCode = int.TryParse(exitParts.Length > 0 ? exitParts[0] : null, out var parsedCode) ? parsedCode : 0;
-            var success = !bool.TryParse(exitParts.Length > 1 ? exitParts[1] : null, out var parsedSuccess) || parsedSuccess;
-            var cwd = ExtractHiddenData(cwdRaw);
+                var s1 = buffer.IndexOf(FormattedSentinel, offset, StringComparison.Ordinal);
+                if (s1 < 0) continue;
+                var s2 = buffer.IndexOf(FormattedSentinel, s1 + sentinelLen, StringComparison.Ordinal);
+                if (s2 < 0) continue;
+                var s3 = buffer.IndexOf(FormattedSentinel, s2 + sentinelLen, StringComparison.Ordinal);
+                if (s3 < 0) continue;
 
-            var trimmed = output.Trim();
-            var truncated = trimmed.Length > MaxOutputLength;
-            if (truncated) trimmed = trimmed[..MaxOutputLength];
-            var result = new CommandResult(command, trimmed, exitCode, success, cwd, truncated);
-            log.LogInformation("Command executed in {Elapsed}ms: {Command}", (int)sw.ElapsedMilliseconds, command);
-            log.LogDebug("Command result: {Result}", JsonSerializer.Serialize(result));
-            CommandCompleted?.Invoke();
-            return result;
+                var output = buffer[offset..s1];
+                var exitRaw = buffer[(s1 + sentinelLen)..s2];
+                var cwdRaw = buffer[(s2 + sentinelLen)..s3];
+
+                // trim consumed portion to prevent indefinite growth
+                using (var buf = await _outputBuffer.WaitForDisposable(linked.Token))
+                    buf.Value.Remove(0, s3 + sentinelLen);
+
+                // strip the echoed command (first line)
+                var firstNewline = output.IndexOf('\n');
+                if (firstNewline >= 0) output = output[(firstNewline + 1)..];
+
+                // parse exit status: "0|True" or "1|False"
+                var exitParts = ExtractHiddenData(exitRaw).Split('|');
+                var exitCode = int.TryParse(exitParts.Length > 0 ? exitParts[0] : null, out var parsedCode) ? parsedCode : 0;
+                var success = !bool.TryParse(exitParts.Length > 1 ? exitParts[1] : null, out var parsedSuccess) || parsedSuccess;
+                var cwd = ExtractHiddenData(cwdRaw);
+
+                var trimmed = output.Trim();
+                var truncated = trimmed.Length > MaxOutputLength;
+                if (truncated) trimmed = trimmed[..MaxOutputLength];
+                var result = new CommandResult(command, trimmed, exitCode, success, cwd, truncated);
+                log.LogInformation("Command executed in {Elapsed}ms: {Command}", (int)sw.ElapsedMilliseconds, command);
+                log.LogDebug("Command result: {Result}", JsonSerializer.Serialize(result));
+                CommandCompleted?.Invoke();
+                return result;
+            }
+        }
+        finally
+        {
+            _commandRunning = false;
         }
     }
 
@@ -290,8 +302,8 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
 
     private void WriteCommand(string command)
     {
-        // escape clears any partially-typed user input before injecting
-        _term!.WriteToTerm("\x1b");
+        // clear any partially-typed user input before injecting
+        _term!.WriteToTerm(new string('\x08', 2048));
         foreach (var c in command.SaneSplit('\r', '\n'))
         {
             _term!.WriteToTerm(c + '\r');

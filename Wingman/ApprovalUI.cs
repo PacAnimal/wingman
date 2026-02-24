@@ -71,9 +71,10 @@ public class ApprovalUI(ChatPanel chatPanel) : IApprovalUI
                 Background = new SolidColorBrush(Color.FromRgb(0x2D, 0x2D, 0x2D)),
                 CornerRadius = new CornerRadius(8),
                 Padding = new Thickness(10, 8, 10, 8),
-                MaxWidth = 360,
+                MaxWidth = chatPanel.BubbleMaxWidth,
                 Margin = new Thickness(8, 4, 8, 4),
                 HorizontalAlignment = HorizontalAlignment.Left,
+                Tag = "bubble",
                 Child = stack
             };
 

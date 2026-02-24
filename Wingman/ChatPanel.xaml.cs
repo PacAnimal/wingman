@@ -46,6 +46,7 @@ public partial class ChatPanel
     private Border? _activeCard;
     private Brush? _savedCaretBrush;
     private double _bubbleMaxWidth = 360;
+    public double BubbleMaxWidth => _bubbleMaxWidth;
     private bool _suppressCompletion;
 
     private FocusTarget _currentFocus = FocusTarget.Input;
@@ -84,8 +85,7 @@ public partial class ChatPanel
         IsKeyboardFocusWithinChanged += (_, e) =>
         {
             if ((bool)e.NewValue) return;
-            if (_pendingChoice != null) ResolveChoice(null);
-            if (_pendingApproval != null) ResolveApproval(false);
+            if (_activeCard != null) return; // card survives focus loss; re-focused on mouse up
         };
 
         // dynamic bubble width: track 85% of the scroll viewer's actual width
@@ -93,8 +93,8 @@ public partial class ChatPanel
         {
             _bubbleMaxWidth = Math.Max(200, MessagesScrollViewer.ActualWidth * 0.85);
             foreach (UIElement child in MessagesPanel.Children)
-                if (child is Grid g && "bubble".Equals(g.Tag))
-                    g.MaxWidth = _bubbleMaxWidth;
+                if (child is FrameworkElement fe && "bubble".Equals(fe.Tag))
+                    fe.MaxWidth = _bubbleMaxWidth;
         };
 
         // track which bubble was clicked — defer all focus decisions to mouse up
@@ -187,6 +187,7 @@ public partial class ChatPanel
     public event Action? UserTyping;
     public event Action<bool>? CardActiveChanged;
     public bool HasActiveCard => _activeCard != null;
+    public void FocusActiveCard() => _activeCard?.Focus();
 
     public event Func<Task>? ResetRequested;
 
