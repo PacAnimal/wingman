@@ -35,15 +35,15 @@
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="Cathedral" Version="0.0.404" />
+      <PackageReference Include="Cathedral" Version="0.0.406" />
       <PackageReference Include="Mime" Version="3.8.0" />
       <PackageReference Include="Microsoft.Extensions.AI" Version="10.3.0" />
       <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.3.0" />
-      <PackageReference Include="Microsoft.Extensions.Hosting" Version="*" />
+      <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
       <!-- GeneratePathProperty gives us $(PkgCI_Microsoft_Windows_Console_ConPTY) for manual import below.
            The package's .targets file is misnamed (missing the CI. prefix) so NuGet never auto-imports it. -->
       <PackageReference Include="CI.Microsoft.Windows.Console.ConPTY" Version="1.22.250314001" GeneratePathProperty="true" />
-      <PackageReference Include="EasyWindowsTerminalControl" Version="*" />
+      <PackageReference Include="EasyWindowsTerminalControl" Version="1.0.36" />
     </ItemGroup>
 
     <!-- fix: manually import the misnamed ConPTY build files -->
