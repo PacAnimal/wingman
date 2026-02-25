@@ -3,9 +3,11 @@ using System.Diagnostics;
 using System.Windows;
 using Cathedral.Utils;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Text;
 
 namespace Wingman;
 
@@ -28,6 +30,7 @@ public partial class ChatPanel
         ["/forget everything", .. Enumerable.Range(1, 9).Select(i => $"/forget {i}")];
 
     private static readonly ControlTemplate BubbleTextTemplate = MakeBubbleTextTemplate();
+    private static readonly ControlTemplate RichBubbleTemplate = MakeRichBubbleTemplate();
     private static readonly ControlTemplate CopyBtnTemplate = MakeCopyBtnTemplate();
 
     private IChatService? _chatService;
@@ -39,7 +42,11 @@ public partial class ChatPanel
     private CancellationTokenSource? _streamingCts;
     private readonly Toggle _needNewBubble = new();
     private TypingIndicator? _typing;
-    private TextBox? _currentBubble;
+    private TextBox? _currentBubble;           // typing placeholder for the current AI bubble
+    private RichTextBox? _currentRichBubble;   // actual AI content bubble
+    private StringBuilder? _mdAccumulator;     // raw markdown accumulated during streaming
+    private string _lastRenderedMd = "";       // dedup guard to skip redundant renders
+    private Border? _currentAiBubbleBorder;    // border wrapping the current AI bubble
     private bool _currentBubbleHasContent;
     private TaskCompletionSource<bool>? _pendingApproval;
     private Action<bool>? _pendingApprovalCallback;
@@ -53,8 +60,8 @@ public partial class ChatPanel
     private bool _suppressCompletion;
 
     private FocusTarget _currentFocus = FocusTarget.Input;
-    private TextBox? _selectedBubble;
-    private TextBox? _mouseDownBubble;
+    private Control? _selectedBubble;
+    private Control? _mouseDownBubble;
 
     public FocusTarget CurrentFocus
     {
@@ -65,7 +72,7 @@ public partial class ChatPanel
             _currentFocus = value; // update first to prevent re-entrancy via InputBox.GotFocus
             if (prev == FocusTarget.ChatLogText && value != FocusTarget.ChatLogText)
             {
-                _selectedBubble?.Select(0, 0);
+                ClearSelection(_selectedBubble);
                 _selectedBubble = null;
                 InputBox.Focus(); // bubble held keyboard focus; return it to InputBox
             }
@@ -105,7 +112,7 @@ public partial class ChatPanel
         MessagesScrollViewer.PreviewMouseDown += (_, e) =>
         {
             if (_activeCard != null) return;
-            _mouseDownBubble = e.OriginalSource is DependencyObject src ? FindBubbleTextBox(src) : null;
+            _mouseDownBubble = e.OriginalSource is DependencyObject src ? FindBubbleControl(src) : null;
         };
 
         // after mouse-up: if text was selected in a bubble, track it and leave focus on the bubble;
@@ -114,10 +121,10 @@ public partial class ChatPanel
         {
             var bubble = _mouseDownBubble;
             _mouseDownBubble = null;
-            if (bubble != null && !string.IsNullOrEmpty(bubble.SelectedText))
+            if (bubble != null && !string.IsNullOrEmpty(GetSelectedText(bubble)))
             {
                 if (_selectedBubble != bubble)
-                    _selectedBubble?.Select(0, 0);
+                    ClearSelection(_selectedBubble);
                 _selectedBubble = bubble;
                 CurrentFocus = FocusTarget.ChatLogText; // bubble keeps keyboard focus
             }
@@ -224,9 +231,11 @@ public partial class ChatPanel
         // if streaming, open a fresh bubble below the card summary and resume typing
         if (_isStreaming)
         {
-            _currentBubble = AddBubble("", isUser: false);
+            _currentRichBubble = AddAiBubble();
+            _mdAccumulator = new StringBuilder();
+            _lastRenderedMd = "";
             _currentBubbleHasContent = false;
-            _typing?.Retarget(_currentBubble);
+            _typing?.Retarget(_currentBubble!);
             _typing?.Start();
             _needNewBubble.TryReset();
         }
@@ -389,7 +398,7 @@ public partial class ChatPanel
         {
             if (e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control)
             {
-                Clipboard.SetText(_selectedBubble.SelectedText);
+                Clipboard.SetText(GetSelectedText(_selectedBubble));
                 CurrentFocus = FocusTarget.Input; // setter clears selection + returns focus to InputBox
                 e.Handled = true;
                 return;
@@ -501,14 +510,31 @@ public partial class ChatPanel
         _ = SendMessage();
     }
 
-    private TextBox? FindBubbleTextBox(DependencyObject obj)
+    private Control? FindBubbleControl(DependencyObject obj)
     {
         while (obj != null)
         {
+            if (obj is RichTextBox rtb) return rtb;
             if (obj is TextBox tb && tb != InputBox) return tb;
-            obj = VisualTreeHelper.GetParent(obj);
+            // ContentElements (Run, Bold, etc.) are not Visuals — use logical tree
+            obj = obj is ContentElement ce
+                ? ContentOperations.GetParent(ce) ?? LogicalTreeHelper.GetParent(ce)
+                : VisualTreeHelper.GetParent(obj);
         }
         return null;
+    }
+
+    private static string GetSelectedText(Control? c) => c switch
+    {
+        TextBox tb => tb.SelectedText,
+        RichTextBox rtb => rtb.Selection.Text,
+        _ => "",
+    };
+
+    private static void ClearSelection(Control? c)
+    {
+        if (c is TextBox tb) tb.Select(0, 0);
+        else if (c is RichTextBox rtb) rtb.Selection.Select(rtb.Document.ContentStart, rtb.Document.ContentStart);
     }
 
     private static bool IsModifierKey(Key key) => key is
@@ -545,10 +571,12 @@ public partial class ChatPanel
         _hintTimer.Start();
         _hintWatch.Start();
 
-        AddBubble(userText, isUser: true);
-        _currentBubble = AddBubble("", isUser: false);
+        AddUserBubble(userText);
+        _currentRichBubble = AddAiBubble();
+        _mdAccumulator = new StringBuilder();
+        _lastRenderedMd = "";
         _currentBubbleHasContent = false;
-        _typing = new TypingIndicator(_currentBubble);
+        _typing = new TypingIndicator(_currentBubble!);
         _typing.Start();
 
         _streamingCts = new CancellationTokenSource();
@@ -562,14 +590,16 @@ public partial class ChatPanel
                     _needNewBubble.TryReset();
                     if (_currentBubbleHasContent)
                     {
-                        _currentBubble = AddBubble("", isUser: false);
+                        _currentRichBubble = AddAiBubble();
+                        _mdAccumulator = new StringBuilder();
+                        _lastRenderedMd = "";
                         _currentBubbleHasContent = false;
-                        _typing.Retarget(_currentBubble);
+                        _typing.Retarget(_currentBubble!);
                     }
                 }
 
                 // drain activity breadcrumbs above the current bubble
-                var insertIdx = _currentBubble?.Parent is FrameworkElement fe && fe.Parent is UIElement bw ? MessagesPanel.Children.IndexOf(bw) : -1;
+                var insertIdx = _currentAiBubbleBorder?.Parent is UIElement bw ? MessagesPanel.Children.IndexOf(bw) : -1;
                 while (_pendingActivities.TryDequeue(out var activity))
                 {
                     var tb = new TextBlock
@@ -596,10 +626,12 @@ public partial class ChatPanel
                 if (!_currentBubbleHasContent)
                 {
                     _typing.Stop();
-                    _currentBubble!.Text = "";
+                    // swap typing placeholder out; rich bubble takes its place
+                    _currentAiBubbleBorder!.Child = _currentRichBubble;
                     _currentBubbleHasContent = true;
                 }
-                _currentBubble!.Text += chunk;
+                _mdAccumulator!.Append(chunk);
+                RenderMarkdown();
                 ScrollToBottom();
             }
         }
@@ -618,8 +650,14 @@ public partial class ChatPanel
         catch (Exception ex)
         {
             _typing?.Stop();
-            _currentBubble!.Text = $"[Error: {ex.Message}]";
-            _currentBubble.Foreground = Brushes.IndianRed;
+            if (!_currentBubbleHasContent && _currentAiBubbleBorder != null)
+            {
+                _currentAiBubbleBorder.Child = _currentRichBubble;
+                _currentBubbleHasContent = true;
+            }
+            var errorDoc = new FlowDocument();
+            errorDoc.Blocks.Add(new Paragraph(new Run($"[Error: {ex.Message}]")) { Foreground = Brushes.IndianRed });
+            _currentRichBubble?.Document = errorDoc;
         }
         finally
         {
@@ -634,7 +672,16 @@ public partial class ChatPanel
         }
     }
 
-    private TextBox AddBubble(string text, bool isUser)
+    private void RenderMarkdown()
+    {
+        var md = _mdAccumulator!.ToString();
+        if (md == _lastRenderedMd) return;
+        _lastRenderedMd = md;
+        _currentRichBubble!.Tag = md;
+        _currentRichBubble.Document = MarkdownRenderer.Render(md);
+    }
+
+    private void AddUserBubble(string text)
     {
         var textBox = new TextBox
         {
@@ -656,38 +703,21 @@ public partial class ChatPanel
         };
         textBox.Resources[SystemColors.InactiveSelectionHighlightBrushKey] =
             new SolidColorBrush(Color.FromRgb(0x26, 0x4F, 0x78));
+
         var border = new Border
         {
             Child = textBox,
-            Background = new SolidColorBrush(isUser
-                ? Color.FromRgb(0x0E, 0x63, 0x9C)
-                : Color.FromRgb(0x2D, 0x2D, 0x2D)),
+            Background = new SolidColorBrush(Color.FromRgb(0x0E, 0x63, 0x9C)),
             CornerRadius = new CornerRadius(8),
             Padding = new Thickness(10, 6, 10, 6),
         };
-        var copyBtn = new Button
-        {
-            Content = "\uE8C8",
-            FontFamily = new FontFamily("Segoe MDL2 Assets"),
-            FontSize = 11,
-            Focusable = false,
-            VerticalAlignment = VerticalAlignment.Top,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 2, 2, 0),
-            Padding = new Thickness(4, 2, 4, 2),
-            Visibility = Visibility.Collapsed,
-            Background = new SolidColorBrush(Color.FromArgb(0xBB, 0x1E, 0x1E, 0x1E)),
-            Foreground = Brushes.White,
-            BorderThickness = new Thickness(0),
-            Cursor = Cursors.Hand,
-            Template = CopyBtnTemplate,
-        };
+        var copyBtn = MakeCopyButton();
         var wrapper = new Grid
         {
             Tag = "bubble",
             MaxWidth = _bubbleMaxWidth,
             Margin = new Thickness(8, 4, 8, 4),
-            HorizontalAlignment = isUser ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+            HorizontalAlignment = HorizontalAlignment.Right,
         };
         wrapper.Children.Add(border);
         wrapper.Children.Add(copyBtn);
@@ -696,7 +726,74 @@ public partial class ChatPanel
         copyBtn.Click += (_, _) => Clipboard.SetText(textBox.Text);
         MessagesPanel.Children.Add(wrapper);
         ScrollToBottom();
-        return textBox;
+    }
+
+    private RichTextBox AddAiBubble()
+    {
+        // typing placeholder: hosts the TypingIndicator dots until first content arrives
+        var typingBox = new TextBox
+        {
+            IsReadOnly = true,
+            IsTabStop = false,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            UndoLimit = 0,
+            IsUndoEnabled = false,
+            CaretBrush = Brushes.Transparent,
+            FocusVisualStyle = null,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brushes.White,
+            FontSize = 13,
+            Template = BubbleTextTemplate,
+        };
+
+        var rtb = new RichTextBox
+        {
+            IsReadOnly = true,
+            IsTabStop = false,
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(0),
+            IsUndoEnabled = false,
+            CaretBrush = Brushes.Transparent,
+            FocusVisualStyle = null,
+            Foreground = Brushes.White,
+            FontSize = 13,
+            Template = RichBubbleTemplate,
+            IsInactiveSelectionHighlightEnabled = true,
+        };
+        rtb.Resources[SystemColors.InactiveSelectionHighlightBrushKey] =
+            new SolidColorBrush(Color.FromRgb(0x26, 0x4F, 0x78));
+
+        var border = new Border
+        {
+            Child = typingBox, // typing dots start here; swapped to rtb on first content
+            Background = new SolidColorBrush(Color.FromRgb(0x2D, 0x2D, 0x2D)),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 6, 10, 6),
+        };
+        var copyBtn = MakeCopyButton();
+        var wrapper = new Grid
+        {
+            Tag = "bubble",
+            MaxWidth = _bubbleMaxWidth,
+            Margin = new Thickness(8, 4, 8, 4),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        wrapper.Children.Add(border);
+        wrapper.Children.Add(copyBtn);
+        wrapper.MouseEnter += (_, _) => copyBtn.Visibility = Visibility.Visible;
+        wrapper.MouseLeave += (_, _) => copyBtn.Visibility = Visibility.Collapsed;
+        // copy the raw markdown stored in Tag; fall back to plain text extraction
+        copyBtn.Click += (_, _) => Clipboard.SetText(rtb.Tag as string
+            ?? new TextRange(rtb.Document.ContentStart, rtb.Document.ContentEnd).Text.TrimEnd());
+        MessagesPanel.Children.Add(wrapper);
+        ScrollToBottom();
+
+        _currentBubble = typingBox;
+        _currentAiBubbleBorder = border;
+        return rtb;
     }
 
     public void InsertElement(UIElement element)
@@ -712,9 +809,41 @@ public partial class ChatPanel
 
     private void ScrollToBottom() => MessagesScrollViewer.ScrollToEnd();
 
+    private static Button MakeCopyButton() => new()
+    {
+        Content = "\uE8C8",
+        FontFamily = new FontFamily("Segoe MDL2 Assets"),
+        FontSize = 11,
+        Focusable = false,
+        VerticalAlignment = VerticalAlignment.Top,
+        HorizontalAlignment = HorizontalAlignment.Right,
+        Margin = new Thickness(0, 2, 2, 0),
+        Padding = new Thickness(4, 2, 4, 2),
+        Visibility = Visibility.Collapsed,
+        Background = new SolidColorBrush(Color.FromArgb(0xBB, 0x1E, 0x1E, 0x1E)),
+        Foreground = Brushes.White,
+        BorderThickness = new Thickness(0),
+        Cursor = Cursors.Hand,
+        Template = CopyBtnTemplate,
+    };
+
     private static ControlTemplate MakeBubbleTextTemplate()
     {
         var template = new ControlTemplate(typeof(TextBox));
+        var sv = new FrameworkElementFactory(typeof(ScrollViewer))
+        {
+            Name = "PART_ContentHost"
+        };
+        sv.SetValue(ScrollViewer.FocusableProperty, false);
+        sv.SetValue(ScrollViewer.HorizontalScrollBarVisibilityProperty, ScrollBarVisibility.Disabled);
+        sv.SetValue(ScrollViewer.VerticalScrollBarVisibilityProperty, ScrollBarVisibility.Disabled);
+        template.VisualTree = sv;
+        return template;
+    }
+
+    private static ControlTemplate MakeRichBubbleTemplate()
+    {
+        var template = new ControlTemplate(typeof(RichTextBox));
         var sv = new FrameworkElementFactory(typeof(ScrollViewer))
         {
             Name = "PART_ContentHost"

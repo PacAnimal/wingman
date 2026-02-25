@@ -33,6 +33,7 @@ public class ListDirectoryTool(AgentEvents events) : IAgentTool
                 sb.AppendLine($"[FILE] {f.Name} ({mime}, {FormatSize(f.Length)})");
             }
 
+            events.RaiseToolResult($"[tool] listed {path} — {entries.Length} entries");
             return sb.Length == 0 ? "(empty directory)" : sb.ToString().TrimEnd();
         }
         catch (UnauthorizedAccessException)

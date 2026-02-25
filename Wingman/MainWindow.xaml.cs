@@ -174,13 +174,14 @@ public partial class MainWindow
             new ListDirectoryTool(events),
             new ReadFileTool(lazyApproval, events),
             new WriteFileTool(_terminal, lazyApproval, events),
+            new EditFileTool(_terminal, lazyApproval, events),
             new SaveMemoryTool(memory, events),
             new DeleteMemoryTool(memory, events),
             new UpdateMemoryTool(memory, events),
             new ListMemoryTool(memory, events),
         ];
 
-        var chatService = new ChatService(ChatClientFactory, tools, memoryBlock, provider.SupportsWebSearch);
+        var chatService = new ChatService(ChatClientFactory, guardClient, events, tools, memoryBlock, provider.SupportsWebSearch);
 
         _taskDescription = new TaskDescriptionService();
         _taskDescription.Start(guardClient, chatService, _screenBuffer);

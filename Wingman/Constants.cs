@@ -14,4 +14,9 @@ internal static class Constants
     internal const int TaskFirstCommandDelaySeconds = 60;
 
     internal const int MaxMemories = 100;
+
+    // when history exceeds this, summarize old messages before sending to the API
+    internal const int ContextSummarizeThreshold = 100;
+    // keep last N messages verbatim; everything older gets summarized
+    internal const int ContextRecentToKeep = 80;
 }

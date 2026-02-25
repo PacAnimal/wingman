@@ -36,6 +36,7 @@
 
     <ItemGroup>
       <PackageReference Include="Cathedral" Version="0.0.406" />
+      <PackageReference Include="Markdig" Version="0.40.0" />
       <PackageReference Include="Mime" Version="3.8.0" />
       <PackageReference Include="Microsoft.Extensions.AI" Version="10.3.0" />
       <PackageReference Include="Anthropic" Version="12.4.0" />
