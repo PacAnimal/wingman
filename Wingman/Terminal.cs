@@ -13,7 +13,7 @@ using Microsoft.Extensions.Logging;
 namespace Wingman;
 
 // ReSharper disable NotAccessedPositionalProperty.Global
-public record CommandResult(string Command, string Output, int ExitCode, bool Success, string WorkingDirectory, bool Truncated);
+public record CommandResult(string Command, string Output, int ExitCode, bool Success, string WorkingDirectory, bool Truncated, string Duration);
 // ReSharper restore NotAccessedPositionalProperty.Global
 
 public interface ITerminal
@@ -272,7 +272,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
                 var trimmed = output.Trim();
                 var truncated = trimmed.Length > MaxOutputLength;
                 if (truncated) trimmed = trimmed[..MaxOutputLength];
-                var result = new CommandResult(command, trimmed, exitCode, success, cwd, truncated);
+                var result = new CommandResult(command, trimmed, exitCode, success, cwd, truncated, sw.Elapsed.ToString(@"hh\:mm\:ss"));
                 log.LogInformation("Command executed in {Elapsed}ms: {Command}", (int)sw.ElapsedMilliseconds, command);
                 log.LogDebug("Command result: {Result}", JsonSerializer.Serialize(result));
                 CommandCompleted?.Invoke();

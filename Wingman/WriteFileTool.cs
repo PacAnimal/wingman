@@ -29,6 +29,7 @@ public class WriteFileTool(ITerminal terminal, Lazy<IApprovalUI> approvalUi, Age
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path) ?? path);
             await File.WriteAllTextAsync(path, content);
+            events.RaiseToolResult($"[tool] wrote {content.Length} chars to {path}");
             return $"Written {content.Length} characters to {path}";
         }
         catch (UnauthorizedAccessException)

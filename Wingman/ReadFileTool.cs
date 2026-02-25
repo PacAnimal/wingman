@@ -58,6 +58,7 @@ public class ReadFileTool(Lazy<IApprovalUI> approvalUi, AgentEvents events) : IA
             if (truncated)
                 sb.AppendLine($"\n[Showing lines {effectiveOffset + 1}–{effectiveOffset + slice.Length} of {totalLines}. Use offset/limit to read more.]");
 
+            events.RaiseToolResult($"[tool] read {path} — {slice.Length} lines");
             return sb.ToString().TrimEnd();
         }
         catch (UnauthorizedAccessException)

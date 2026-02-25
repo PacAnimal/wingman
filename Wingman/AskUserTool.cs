@@ -87,6 +87,11 @@ public class AskUserTool(Lazy<ChatPanel> chatPanel, AgentEvents events) : IAgent
             panel.InsertElement(card);
         });
 
-        return tcs.Task.ContinueWith(t => t.Result ?? "User aborted — they may want to provide further input instead");
+        return tcs.Task.ContinueWith(t =>
+        {
+            var selection = t.Result;
+            events.RaiseToolResult(selection != null ? $"[tool] asked user — chose \"{selection}\"" : "[tool] asked user — no selection");
+            return selection ?? "User aborted — they may want to provide further input instead";
+        });
     }
 }
