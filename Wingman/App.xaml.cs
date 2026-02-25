@@ -40,15 +40,17 @@ public partial class App : Application
         var settings = new SettingsService();
         string? startupError;
         string? apiKey = null;
+        AiProviderKind? initialProvider = null;
 
         try
         {
             var stored = await settings.LoadAsync();
-            apiKey = stored.OpenAiApiKey;
+            initialProvider = stored.Provider;
+            apiKey = stored.EffectiveApiKey;
 
             if (string.IsNullOrEmpty(apiKey))
             {
-                startupError = "Enter your OpenAI API key to get started.";
+                startupError = "Enter your API key to get started.";
             }
             else
             {
@@ -78,7 +80,8 @@ public partial class App : Application
                     sp.GetRequiredService<ITerminal>(),
                     sp.GetRequiredService<ISettingsService>(),
                     sp.GetRequiredService<IScreenBuffer>(),
-                    startupError));
+                    startupError,
+                    initialProvider ?? (apiKey != null ? AiProvider.Detect(apiKey).Kind : null)));
             })
             .Build();
 

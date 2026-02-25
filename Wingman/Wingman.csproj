@@ -22,7 +22,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
-        <NoWarn>OPENAI001</NoWarn>
+        <NoWarn>OPENAI001;ANTHROPIC001</NoWarn>
         <SelfContained>true</SelfContained>
         <PublishSingleFile>true</PublishSingleFile>
         <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
@@ -38,6 +38,7 @@
       <PackageReference Include="Cathedral" Version="0.0.406" />
       <PackageReference Include="Mime" Version="3.8.0" />
       <PackageReference Include="Microsoft.Extensions.AI" Version="10.3.0" />
+      <PackageReference Include="Anthropic" Version="12.4.0" />
       <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.3.0" />
       <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
       <!-- GeneratePathProperty gives us $(PkgCI_Microsoft_Windows_Console_ConPTY) for manual import below.

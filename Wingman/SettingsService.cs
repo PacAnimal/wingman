@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text;
 using Cathedral.Utils;
 using Microsoft.Extensions.AI;
-using OpenAI;
 
 namespace Wingman;
 
@@ -11,6 +10,7 @@ public interface ISettingsService
 {
     Task<WingmanSettings> LoadAsync(CancellationToken ct = default);
     Task SaveKeyAsync(string key, CancellationToken ct = default);
+    Task SetProviderAsync(AiProviderKind provider, CancellationToken ct = default);
     Task<string?> ValidateKeyAsync(string key, CancellationToken ct = default);
     Task<List<string>> GetMemoriesAsync(CancellationToken ct = default);
     Task UpdateMemoriesAsync(Action<List<string>> update, CancellationToken ct = default);
@@ -36,7 +36,20 @@ public class SettingsService : ISettingsService
     public Task<WingmanSettings> LoadAsync(CancellationToken ct = default) => _store.Read(ct);
 
     public Task SaveKeyAsync(string key, CancellationToken ct = default) =>
-        _store.Update(s => s.OpenAiApiKey = key, ct);
+        _store.Update(s =>
+        {
+            var kind = AiProvider.Detect(key).Kind;
+            switch (kind)
+            {
+                case AiProviderKind.OpenAI: s.OpenAiApiKey = key; break;
+                case AiProviderKind.Anthropic: s.AnthropicApiKey = key; break;
+            }
+            s.Provider = kind;
+            s.ApiKey = null;
+        }, ct);
+
+    public Task SetProviderAsync(AiProviderKind provider, CancellationToken ct = default) =>
+        _store.Update(s => s.Provider = provider, ct);
 
     public async Task<List<string>> GetMemoriesAsync(CancellationToken ct = default)
     {
@@ -53,9 +66,8 @@ public class SettingsService : ISettingsService
         cts.CancelAfter(TimeSpan.FromSeconds(15));
         try
         {
-            var client = new OpenAIClient(key)
-                .GetResponsesClient(Constants.GuardModel)
-                .AsIChatClient();
+            var provider = AiProvider.Detect(key);
+            var client = provider.CreateGuardClient(key);
             await client.GetResponseAsync("hi", new ChatOptions { MaxOutputTokens = 32 }, cts.Token);
             return null;
         }

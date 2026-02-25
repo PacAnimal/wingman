@@ -173,6 +173,9 @@ public partial class ChatPanel
         if (chatService == null)
         {
             OverlayMessage.Text = errorMessage ?? string.Empty;
+            ApiKeyBox.Text = string.Empty;
+            ApiKeyBox.IsEnabled = true;
+            OverlayStatus.Text = "Press Enter to submit";
             DisabledOverlay.Visibility = Visibility.Visible;
             ApiKeyBox.Focus();
         }

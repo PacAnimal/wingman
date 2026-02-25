@@ -18,7 +18,8 @@ public interface IWindowsNative
     void EnableDarkTitleBar(IntPtr hwnd);
     void AddAlwaysOnTopMenu(IntPtr hwnd);
     void ToggleAlwaysOnTopCheck(IntPtr hwnd, bool isChecked);
-    void InitializeWindow(IntPtr hwnd, Action<bool> setTopmost);
+    void InitializeWindow(IntPtr hwnd, Action<bool> setTopmost, AiProviderKind? currentProvider, Action<AiProviderKind> onProviderSelected);
+    void UpdateProviderCheck(IntPtr hwnd, AiProviderKind provider);
     void HookPreprocessMessage(Func<bool> isChatLogActive, Func<string?> getTerminalSelection, Action focusTerminal);
     void UnhookPreprocessMessage();
 }
@@ -41,7 +42,10 @@ public partial class WindowsNative : IWindowsNative
     private const uint MF_BYCOMMAND = 0x00000000;
     private const uint MF_CHECKED = 0x00000008;
     private const uint MF_UNCHECKED = 0x00000000;
+    private const uint MF_POPUP = 0x00000010;
     internal const uint WM_SYSCOMMAND_ALWAYS_ON_TOP = 0x1000;
+    internal const uint WM_SYSCOMMAND_PROVIDER_OPENAI = 0x1010;
+    internal const uint WM_SYSCOMMAND_PROVIDER_ANTHROPIC = 0x1020;
 
     [LibraryImport("user32.dll")]
     private static partial IntPtr GetSystemMenu(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool bRevert);
@@ -49,6 +53,13 @@ public partial class WindowsNative : IWindowsNative
     [LibraryImport("user32.dll", EntryPoint = "AppendMenuW", StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool AppendMenu(IntPtr hMenu, uint uFlags, uint uIDNewItem, string? lpNewItem);
+
+    [LibraryImport("user32.dll", EntryPoint = "AppendMenuW", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool AppendPopupMenu(IntPtr hMenu, uint uFlags, IntPtr hSubMenu, string? lpNewItem);
+
+    [LibraryImport("user32.dll")]
+    private static partial IntPtr CreatePopupMenu();
 
     [LibraryImport("user32.dll")]
     private static partial uint CheckMenuItem(IntPtr hMenu, uint uIDCheckItem, uint uCheck);
@@ -87,28 +98,80 @@ public partial class WindowsNative : IWindowsNative
         AppendMenu(menu, MF_STRING, WM_SYSCOMMAND_ALWAYS_ON_TOP, "Always on top");
     }
 
+    private void AddCustomMenuItems(IntPtr hwnd, AiProviderKind? currentProvider)
+    {
+        var menu = GetSystemMenu(hwnd, false);
+
+        // provider submenu
+        var sub = CreatePopupMenu();
+        AppendMenu(sub, MF_STRING, WM_SYSCOMMAND_PROVIDER_OPENAI, "OpenAI");
+        AppendMenu(sub, MF_STRING, WM_SYSCOMMAND_PROVIDER_ANTHROPIC, "Anthropic");
+
+        AppendMenu(menu, MF_SEPARATOR, 0, null);
+        AppendPopupMenu(menu, MF_POPUP, sub, "Select provider");
+
+        // check current provider
+        if (currentProvider != null)
+        {
+            var id = currentProvider == AiProviderKind.OpenAI
+                ? WM_SYSCOMMAND_PROVIDER_OPENAI
+                : WM_SYSCOMMAND_PROVIDER_ANTHROPIC;
+            CheckMenuItem(sub, id, MF_BYCOMMAND | MF_CHECKED);
+        }
+
+        // always on top
+        AppendMenu(menu, MF_SEPARATOR, 0, null);
+        AppendMenu(menu, MF_STRING, WM_SYSCOMMAND_ALWAYS_ON_TOP, "Always on top");
+    }
+
     public void ToggleAlwaysOnTopCheck(IntPtr hwnd, bool isChecked)
     {
         var menu = GetSystemMenu(hwnd, false);
         _ = CheckMenuItem(menu, WM_SYSCOMMAND_ALWAYS_ON_TOP, MF_BYCOMMAND | (isChecked ? MF_CHECKED : MF_UNCHECKED));
     }
 
-    public void InitializeWindow(IntPtr hwnd, Action<bool> setTopmost)
+    public void UpdateProviderCheck(IntPtr hwnd, AiProviderKind provider)
     {
-        EnableDarkTitleBar(hwnd);
-        AddAlwaysOnTopMenu(hwnd);
-        HwndSource.FromHwnd(hwnd)?.AddHook((h, msg, wp, lp, ref handled) => WndProc(h, msg, wp, lp, ref handled, setTopmost));
+        var menu = GetSystemMenu(hwnd, false);
+        // find the submenu by scanning — the submenu items are at fixed command IDs
+        CheckMenuItem(menu, WM_SYSCOMMAND_PROVIDER_OPENAI,
+            MF_BYCOMMAND | (provider == AiProviderKind.OpenAI ? MF_CHECKED : MF_UNCHECKED));
+        CheckMenuItem(menu, WM_SYSCOMMAND_PROVIDER_ANTHROPIC,
+            MF_BYCOMMAND | (provider == AiProviderKind.Anthropic ? MF_CHECKED : MF_UNCHECKED));
     }
 
-    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr _, ref bool handled, Action<bool> setTopmost)
+    public void InitializeWindow(IntPtr hwnd, Action<bool> setTopmost, AiProviderKind? currentProvider, Action<AiProviderKind> onProviderSelected)
     {
-        if (msg == WM_SYSCOMMAND && ((uint)wParam & 0xFFF0) == WM_SYSCOMMAND_ALWAYS_ON_TOP)
+        EnableDarkTitleBar(hwnd);
+        AddCustomMenuItems(hwnd, currentProvider);
+        HwndSource.FromHwnd(hwnd)?.AddHook((h, msg, wp, lp, ref handled) =>
+            WndProc(h, msg, wp, lp, ref handled, setTopmost, onProviderSelected));
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr _, ref bool handled,
+        Action<bool> setTopmost, Action<AiProviderKind> onProviderSelected)
+    {
+        if (msg != WM_SYSCOMMAND) return IntPtr.Zero;
+
+        var cmd = (uint)wParam & 0xFFF0;
+        if (cmd == WM_SYSCOMMAND_ALWAYS_ON_TOP)
         {
             _alwaysOnTop = !_alwaysOnTop;
             setTopmost(_alwaysOnTop);
             ToggleAlwaysOnTopCheck(hwnd, _alwaysOnTop);
             handled = true;
         }
+        else if (cmd == WM_SYSCOMMAND_PROVIDER_OPENAI)
+        {
+            onProviderSelected(AiProviderKind.OpenAI);
+            handled = true;
+        }
+        else if (cmd == WM_SYSCOMMAND_PROVIDER_ANTHROPIC)
+        {
+            onProviderSelected(AiProviderKind.Anthropic);
+            handled = true;
+        }
+
         return IntPtr.Zero;
     }
 

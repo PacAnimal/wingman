@@ -20,7 +20,7 @@ public class ChatService : IChatService
 
     public IReadOnlyList<ChatMessage> History => _history;
 
-    public ChatService(Func<IChatClient> clientFactory, IEnumerable<IAgentTool> tools, string memoryBlock)
+    public ChatService(Func<IChatClient> clientFactory, IEnumerable<IAgentTool> tools, string memoryBlock, bool supportsWebSearch = true)
     {
         _clientFactory = clientFactory;
         _client = clientFactory();
@@ -82,13 +82,15 @@ public class ChatService : IChatService
             "- $WMTMP is a per-session scratch directory for temporary files. Use it freely for intermediate work.\n" +
             "- NEVER change the value of $WMTMP — it is a constant set by Wingman.\n" +
             "- Clean up files you create in $WMTMP when you no longer need them.\n\n" +
-            "WEB SEARCH:\n" +
-            "- You have automatic access to web search. When answering questions or performing tasks, " +
-            "actively search the web to retrieve up-to-date information about tools, software versions, " +
-            "best practices, documentation, APIs, and similar topics.\n" +
-            "- Do not rely solely on your training data when current information matters — " +
-            "search first, then act on what you find.\n" +
-            "- You do not need to call any tool explicitly — the system searches automatically when your response requires it.\n\n" +
+            (supportsWebSearch
+                ? "WEB SEARCH:\n" +
+                  "- You have automatic access to web search. When answering questions or performing tasks, " +
+                  "actively search the web to retrieve up-to-date information about tools, software versions, " +
+                  "best practices, documentation, APIs, and similar topics.\n" +
+                  "- Do not rely solely on your training data when current information matters — " +
+                  "search first, then act on what you find.\n" +
+                  "- You do not need to call any tool explicitly — the system searches automatically when your response requires it.\n\n"
+                : "") +
             "MEMORY:\n" +
             "- You have persistent memory across sessions via save_memory, delete_memory, update_memory, and list_memory tools.\n" +
             "- After discovering useful environment facts (installed tools, versions, modules, user preferences, common paths), save them with save_memory.\n" +
@@ -98,7 +100,9 @@ public class ChatService : IChatService
             "- When you have 90+ memories, proactively prune: merge related memories, delete obsolete ones, and compress verbose memories into concise facts.\n" +
             "- Do NOT save conversation-specific context — only durable environment facts." +
             (memoryBlock.Length == 0 ? "" : "\n\n" + memoryBlock)));
-        _options = new ChatOptions { Tools = [.. tools.Select(t => t.AsAIFunction()), new HostedWebSearchTool()] };
+        var toolList = tools.Select(t => t.AsAIFunction()).Cast<AITool>().ToList();
+        if (supportsWebSearch) toolList.Add(new HostedWebSearchTool());
+        _options = new ChatOptions { Tools = toolList };
     }
 
     public async IAsyncEnumerable<string> SendMessageAsync(string userMessage,

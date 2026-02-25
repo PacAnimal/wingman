@@ -6,7 +6,6 @@ using EasyWindowsTerminalControl;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Terminal.Wpf;
-using OpenAI;
 
 namespace Wingman;
 
@@ -20,16 +19,19 @@ public partial class MainWindow
     private readonly ISettingsService _settings;
     private readonly IScreenBuffer _screenBuffer;
     private readonly TitleSpinner? _spinner;
+    private readonly AiProviderKind? _initialProvider;
     private TaskDescriptionService? _taskDescription;
     private FocusTarget _focusBeforeCard;
+    private AiProviderKind? _pendingProviderConstraint;
 
-    public MainWindow(ILoggerFactory loggerFactory, IWindowsNative native, ITerminal terminal, ISettingsService settings, IScreenBuffer screenBuffer, string? startupError)
+    public MainWindow(ILoggerFactory loggerFactory, IWindowsNative native, ITerminal terminal, ISettingsService settings, IScreenBuffer screenBuffer, string? startupError, AiProviderKind? initialProvider)
     {
         _loggerFactory = loggerFactory;
         _native = native;
         _terminal = terminal;
         _settings = settings;
         _screenBuffer = screenBuffer;
+        _initialProvider = initialProvider;
         InitializeComponent();
 
         _spinner = new TitleSpinner(UpdateTitle);
@@ -129,18 +131,31 @@ public partial class MainWindow
 
     private async Task<string?> OnApiKeySubmitted(string key)
     {
+        if (_pendingProviderConstraint is { } expected)
+        {
+            var detected = AiProvider.Detect(key).Kind;
+            if (detected != expected)
+            {
+                var expectedLabel = expected == AiProviderKind.OpenAI ? "OpenAI" : "Anthropic";
+                var detectedLabel = detected == AiProviderKind.OpenAI ? "OpenAI" : "Anthropic";
+                return $"That key looks like {detectedLabel}, not {expectedLabel}.";
+            }
+        }
+
         var error = await _settings.ValidateKeyAsync(key);
         if (error != null) return error;
         await _settings.SaveKeyAsync(key);
+        _pendingProviderConstraint = null;
         await ActivateAi(key);
+        UpdateProviderCheckmark(AiProvider.Detect(key).Kind);
         return null;
     }
 
     internal async Task ActivateAi(string apiKey)
     {
-        var openAiClient = new OpenAIClient(apiKey);
+        var provider = AiProvider.Detect(apiKey);
 
-        var guardClient = openAiClient.GetResponsesClient(Constants.GuardModel).AsIChatClient();
+        var guardClient = provider.CreateGuardClient(apiKey);
         var guard = new CommandGuard(guardClient, _loggerFactory.CreateLogger<CommandGuard>());
 
         var memory = new MemoryService(_settings);
@@ -165,7 +180,7 @@ public partial class MainWindow
             new ListMemoryTool(memory, events),
         ];
 
-        var chatService = new ChatService(ChatClientFactory, tools, memoryBlock);
+        var chatService = new ChatService(ChatClientFactory, tools, memoryBlock, provider.SupportsWebSearch);
 
         _taskDescription = new TaskDescriptionService();
         _taskDescription.Start(guardClient, chatService, _screenBuffer);
@@ -190,12 +205,13 @@ public partial class MainWindow
         ChatPanel.FocusPrimaryInput();
         return;
 
-        IChatClient ChatClientFactory() => openAiClient.GetResponsesClient(Constants.ChatModel).AsIChatClient().AsBuilder().UseFunctionInvocation().Build();
+        IChatClient ChatClientFactory() => provider.CreateChatClient(apiKey);
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
-        _native.InitializeWindow(new WindowInteropHelper(this).Handle, v => Topmost = v);
+        _native.InitializeWindow(new WindowInteropHelper(this).Handle, v => Topmost = v,
+            _initialProvider, OnProviderSelected);
 
         // set terminal theme (campbell defaults, smaller font)
         Terminal.Theme = new TerminalTheme
@@ -212,6 +228,32 @@ public partial class MainWindow
                 0xFF783B, 0x9E00B4, 0xD6D661, 0xF2F2F2,
             ],
         };
+    }
+
+    private async void OnProviderSelected(AiProviderKind kind)
+    {
+        var stored = await _settings.LoadAsync();
+        if (kind == (stored.Provider ?? AiProviderKind.OpenAI)) return;
+
+        var key = stored.KeyForProvider(kind);
+        if (!string.IsNullOrEmpty(key))
+        {
+            await _settings.SetProviderAsync(kind);
+            await ActivateAi(key);
+            UpdateProviderCheckmark(kind);
+        }
+        else
+        {
+            var label = kind == AiProviderKind.OpenAI ? "OpenAI" : "Anthropic";
+            _pendingProviderConstraint = kind;
+            ChatPanel.Initialize(null, null, $"Enter your {label} API key", OnApiKeySubmitted);
+        }
+    }
+
+    private void UpdateProviderCheckmark(AiProviderKind kind)
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        _native.UpdateProviderCheck(hwnd, kind);
     }
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
