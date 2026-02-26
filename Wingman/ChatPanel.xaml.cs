@@ -17,11 +17,13 @@ public partial class ChatPanel
 {
     private static readonly string[] HintStrings =
     [
-        "Hit Ctrl+Space or Ctrl+Tab switches focus",
-        "Hit Press Esc to cancel the AI",
-        "Hit Ctrl+Enter for a new line",
+        "Ctrl+Space switches focus between chat and terminal",
+        "Ctrl+T opens a new tab, Ctrl+W closes the current tab",
+        "Ctrl+Tab / Ctrl+Shift+Tab switches between tabs",
+        "Press Esc to cancel the AI",
+        "Ctrl+Enter for a new line",
         "Type /reset to start fresh",
-        "Hit Shift+Enter accepts approval cards",
+        "Shift+Enter accepts approval cards",
         "Ctrl+Arrow keys resize the panels",
     ];
 

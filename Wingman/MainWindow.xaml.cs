@@ -15,116 +15,251 @@ public partial class MainWindow
 
     private readonly ILoggerFactory _loggerFactory;
     private readonly IWindowsNative _native;
-    private readonly ITerminal _terminal;
     private readonly ISettingsService _settings;
-    private readonly IScreenBuffer _screenBuffer;
-    private readonly TitleSpinner? _spinner;
     private readonly AiProviderKind? _initialProvider;
-    private TaskDescriptionService? _taskDescription;
+    private readonly List<TabSession> _tabs = [];
+    private TabSession? _activeTab;
     private FocusTarget _focusBeforeCard;
     private AiProviderKind? _pendingProviderConstraint;
+    private string? _startupError;
+    private TerminalTheme? _terminalTheme;
 
-    public MainWindow(ILoggerFactory loggerFactory, IWindowsNative native, ITerminal terminal, ISettingsService settings, IScreenBuffer screenBuffer, string? startupError, AiProviderKind? initialProvider)
+    public MainWindow(ILoggerFactory loggerFactory, IWindowsNative native, ISettingsService settings, string? startupError, AiProviderKind? initialProvider)
     {
         _loggerFactory = loggerFactory;
         _native = native;
-        _terminal = terminal;
         _settings = settings;
-        _screenBuffer = screenBuffer;
         _initialProvider = initialProvider;
+        _startupError = startupError;
         InitializeComponent();
 
-        _spinner = new TitleSpinner(UpdateTitle);
         TaskbarItemInfo = new System.Windows.Shell.TaskbarItemInfo();
-
-        ChatPanel.Initialize(null, null, startupError, OnApiKeySubmitted);
-        ChatPanel.ResetRequested += async () =>
-        {
-            await _terminal.Reset();
-            _taskDescription?.Reset();
-        };
-        ChatPanel.CardActiveChanged += cardActive =>
-        {
-            if (cardActive)
-            {
-                _focusBeforeCard = ChatPanel.CurrentFocus;
-                ChatPanel.CurrentFocus = FocusTarget.QuestionCard;
-                TerminalBorder.BorderBrush = Brushes.Transparent;
-            }
-            else
-            {
-                if (_focusBeforeCard == FocusTarget.Console)
-                    Terminal.Focus();
-                else
-                    ChatPanel.FocusPrimaryInput();
-            }
-        };
 
         if (!_native.ProbeConPTY())
             MessageBox.Show("FAILED to load conpty.dll — ConPTY will not work.",
                 "Missing Native DLL", MessageBoxButton.OK, MessageBoxImage.Error);
 
+        // Ctrl+C hook references active tab dynamically
         _native.HookPreprocessMessage(
-            () => ChatPanel.CurrentFocus == FocusTarget.ChatLogText,
-            () => Terminal.Terminal.GetSelectedText(),
-            () => Dispatcher.BeginInvoke(Terminal.Focus));
+            () => _activeTab?.ChatPanel.CurrentFocus == FocusTarget.ChatLogText,
+            () => _activeTab?.TerminalControl.Terminal?.GetSelectedText(),
+            () => { if (_activeTab != null) Dispatcher.BeginInvoke(() => _activeTab.TerminalControl.Focus()); });
         Closed += (_, _) => _native.UnhookPreprocessMessage();
 
-        _terminal.ProcessExited += () => Dispatcher.BeginInvoke(Close);
-        _terminal.CommandCompleted += () =>
+        // TabBar events
+        TabBar.TabSelected += id =>
         {
-            if (ChatPanel.CurrentFocus != FocusTarget.Console)
-                Dispatcher.BeginInvoke(() => Terminal.IsCursorVisible = false);
+            var tab = _tabs.Find(t => t.Id == id);
+            if (tab != null) SwitchToTab(tab);
+        };
+        TabBar.TabCloseRequested += id =>
+        {
+            var tab = _tabs.Find(t => t.Id == id);
+            if (tab != null) CloseTab(tab);
+        };
+        TabBar.NewTabRequested += () => _ = CreateTab();
+        TabBar.TabRenamed += (id, newTitle) =>
+        {
+            var tab = _tabs.Find(t => t.Id == id);
+            if (tab != null)
+            {
+                tab.Title = newTitle;
+                tab.IsManuallyNamed = true;
+                if (tab == _activeTab)
+                    UpdateTitle(tab.Spinner?.CurrentFrame);
+            }
         };
 
         PreviewKeyDown += OnPreviewKeyDown;
         PreviewMouseUp += (_, _) =>
         {
-            if (ChatPanel.HasActiveCard)
-                Dispatcher.BeginInvoke(ChatPanel.FocusActiveCard, System.Windows.Threading.DispatcherPriority.Input);
+            if (_activeTab?.ChatPanel.HasActiveCard == true)
+                Dispatcher.BeginInvoke(_activeTab.ChatPanel.FocusActiveCard, System.Windows.Threading.DispatcherPriority.Input);
         };
         SourceInitialized += OnSourceInitialized;
-        Loaded += (_, _) => ChatPanel.FocusPrimaryInput();
+        StateChanged += OnStateChanged;
+        Loaded += (_, _) => _activeTab?.ChatPanel.FocusPrimaryInput();
         Closing += (_, _) => Hide();
 
-        // cursor visibility + focus outline for terminal
-        Terminal.GotFocus += (_, _) =>
-        {
-            ChatPanel.CurrentFocus = FocusTarget.Console;
-            Terminal.IsCursorVisible = true;
-            TerminalBorder.BorderBrush = FocusBorderBrush;
-        };
-        Terminal.LostFocus += (_, _) =>
-        {
-            Terminal.IsCursorVisible = false;
-            TerminalBorder.BorderBrush = Brushes.Transparent;
-        };
-
-        // Init() must run synchronously here (UI thread) so DisconnectConPTYTerm() happens
-        // before Show() → Loaded fires — otherwise the control races us with the default factory
-        _ = InitTerminal();
+        // Create first tab synchronously — Init must disconnect ConPTY before Show/Loaded fires
+        var firstTab = CreateTabSession();
+        _tabs.Add(firstTab);
+        TabBar.AddTab(firstTab.Id, firstTab.Title);
+        ContentGrid.Children.Add(firstTab.ChatPanel);
+        ContentGrid.Children.Add(firstTab.TerminalBorder);
+        _ = InitTabTerminal(firstTab);
+        _activeTab = firstTab;
+        TabBar.SetActiveTab(firstTab.Id);
     }
 
-    private async Task InitTerminal()
+    private async Task InitTabTerminal(TabSession tab)
     {
-        await _terminal.Init(Terminal);
-        // cursor hide must come after init — the ANSI escape is only received once the
-        // connection is live, and Init awaits the command lock so the terminal is fully ready
-        if (!Terminal.IsKeyboardFocusWithin)
-            Terminal.IsCursorVisible = false;
+        await tab.Terminal.Init(tab.TerminalControl);
+        if (!tab.TerminalControl.IsKeyboardFocusWithin)
+            tab.TerminalControl.IsCursorVisible = false;
+    }
+
+    private async Task CreateTab()
+    {
+        var tab = CreateTabSession();
+        _tabs.Add(tab);
+        TabBar.AddTab(tab.Id, tab.Title);
+
+        // Hide until SwitchToTab — prevents overlap with current tab
+        tab.ChatPanel.Visibility = Visibility.Hidden;
+        tab.TerminalBorder.Visibility = Visibility.Hidden;
+        ContentGrid.Children.Add(tab.ChatPanel);
+        ContentGrid.Children.Add(tab.TerminalBorder);
+
+        if (_terminalTheme != null)
+            tab.TerminalControl.Theme = _terminalTheme;
+
+        await tab.Terminal.Init(tab.TerminalControl);
+        if (!tab.TerminalControl.IsKeyboardFocusWithin)
+            tab.TerminalControl.IsCursorVisible = false;
+
+        // Activate AI if key available
+        var stored = await _settings.LoadAsync();
+        var apiKey = stored.EffectiveApiKey;
+        if (!string.IsNullOrEmpty(apiKey))
+            await ActivateAi(apiKey, tab);
+
+        SwitchToTab(tab);
+    }
+
+    private TabSession CreateTabSession()
+    {
+        var tab = new TabSession(_loggerFactory);
+
+        tab.ChatPanel.Initialize(null, null, _startupError, OnApiKeySubmitted);
+        tab.ChatPanel.ResetRequested += async () =>
+        {
+            await tab.Terminal.Reset();
+            tab.TaskDescription?.Reset();
+        };
+        tab.ChatPanel.CardActiveChanged += cardActive =>
+        {
+            if (tab != _activeTab) return;
+            if (cardActive)
+            {
+                _focusBeforeCard = tab.ChatPanel.CurrentFocus;
+                tab.ChatPanel.CurrentFocus = FocusTarget.QuestionCard;
+                tab.TerminalBorder.BorderBrush = Brushes.Transparent;
+            }
+            else
+            {
+                if (_focusBeforeCard == FocusTarget.Console)
+                    tab.TerminalControl.Focus();
+                else
+                    tab.ChatPanel.FocusPrimaryInput();
+            }
+        };
+
+        tab.Terminal.ProcessExited += () => Dispatcher.BeginInvoke(() => CloseTab(tab));
+        tab.Terminal.CommandCompleted += () =>
+        {
+            if (tab != _activeTab) return;
+            if (tab.ChatPanel.CurrentFocus != FocusTarget.Console)
+                Dispatcher.BeginInvoke(() => tab.TerminalControl.IsCursorVisible = false);
+        };
+
+        tab.TerminalControl.GotFocus += (_, _) =>
+        {
+            tab.ChatPanel.CurrentFocus = FocusTarget.Console;
+            tab.LastFocus = FocusTarget.Console;
+            tab.TerminalControl.IsCursorVisible = true;
+            tab.TerminalBorder.BorderBrush = FocusBorderBrush;
+        };
+        tab.TerminalControl.LostFocus += (_, _) =>
+        {
+            tab.TerminalControl.IsCursorVisible = false;
+            tab.TerminalBorder.BorderBrush = Brushes.Transparent;
+        };
+
+        tab.Spinner = new TitleSpinner(frame =>
+        {
+            if (tab == _activeTab)
+                UpdateTitle(frame);
+        });
+
+        return tab;
+    }
+
+    private void SwitchToTab(TabSession tab)
+    {
+        if (_activeTab == tab) return;
+
+        if (_activeTab != null)
+        {
+            _activeTab.LastFocus = _activeTab.ChatPanel.CurrentFocus;
+            _activeTab.ChatPanel.Visibility = Visibility.Hidden;
+            _activeTab.TerminalBorder.Visibility = Visibility.Hidden;
+        }
+
+        _activeTab = tab;
+        tab.ChatPanel.Visibility = Visibility.Visible;
+        tab.TerminalBorder.Visibility = Visibility.Visible;
+
+        TabBar.SetActiveTab(tab.Id);
+        UpdateTitle(tab.Spinner?.CurrentFrame);
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (tab.LastFocus == FocusTarget.Console)
+                tab.TerminalControl.Focus();
+            else
+                tab.ChatPanel.FocusPrimaryInput();
+        });
+    }
+
+    private void CloseTab(TabSession tab)
+    {
+        // Guard: ProcessExited fires after Dispose, re-entering CloseTab for an already-removed tab
+        if (!_tabs.Contains(tab)) return;
+
+        if (_tabs.Count <= 1)
+        {
+            Close();
+            return;
+        }
+
+        if (tab.ChatPanel.IsStreaming)
+            tab.ChatPanel.CancelStreaming();
+
+        if (tab.Terminal.IsCommandRunning)
+            tab.Terminal.SendCtrlC();
+
+        ContentGrid.Children.Remove(tab.ChatPanel);
+        ContentGrid.Children.Remove(tab.TerminalBorder);
+
+        var idx = _tabs.IndexOf(tab);
+        _tabs.Remove(tab);
+        TabBar.RemoveTab(tab.Id);
+
+        if (_activeTab == tab)
+        {
+            _activeTab = null;
+            var newIdx = Math.Min(idx, _tabs.Count - 1);
+            SwitchToTab(_tabs[newIdx]);
+        }
+
+        tab.Dispose();
     }
 
     private void UpdateTitle(char? frame)
     {
-        var task = _taskDescription?.CurrentTask;
-        Title = (frame, task) switch
+        if (_activeTab == null) return;
+        var task = _activeTab.TaskDescription?.CurrentTask;
+        var tabTitle = _activeTab.IsManuallyNamed ? _activeTab.Title
+            : task ?? (_activeTab.Title != "New Tab" ? _activeTab.Title : null);
+        Title = (frame, tabTitle) switch
         {
             ({ } f, { } t) => $"{f} Wingman - {t}",
             ({ } f, null) => $"{f} Wingman",
             (null, { } t) => $"Wingman - {t}",
             _ => "Wingman"
         };
-        TaskbarItemInfo?.ProgressState = frame != null
+        TaskbarItemInfo.ProgressState = frame != null
                 ? System.Windows.Shell.TaskbarItemProgressState.Indeterminate
                 : System.Windows.Shell.TaskbarItemProgressState.None;
     }
@@ -153,6 +288,13 @@ public partial class MainWindow
 
     internal async Task ActivateAi(string apiKey)
     {
+        _startupError = null;
+        foreach (var tab in _tabs)
+            await ActivateAi(apiKey, tab);
+    }
+
+    private async Task ActivateAi(string apiKey, TabSession tab)
+    {
         var provider = AiProvider.Detect(apiKey);
 
         var guardClient = provider.CreateGuardClient(apiKey);
@@ -162,19 +304,20 @@ public partial class MainWindow
         var memoryBlock = await memory.FormatForSystemPrompt();
 
         var events = new AgentEvents();
-        var approvalUi = new ApprovalUI(ChatPanel);
+        tab.Events = events;
+        var approvalUi = new ApprovalUI(tab.ChatPanel);
         var lazyApproval = new Lazy<IApprovalUI>(() => approvalUi);
-        var lazyPanel = new Lazy<ChatPanel>(() => ChatPanel);
+        var lazyPanel = new Lazy<ChatPanel>(() => tab.ChatPanel);
 
         IAgentTool[] tools =
         [
-            new RunCommandTool(_terminal, guard, lazyApproval, events),
+            new RunCommandTool(tab.Terminal, guard, lazyApproval, events),
             new AskUserTool(lazyPanel, events),
-            new ReadTerminalTool(_screenBuffer, events),
+            new ReadTerminalTool(tab.ScreenBuffer, events),
             new ListDirectoryTool(events),
             new ReadFileTool(lazyApproval, events),
-            new WriteFileTool(_terminal, lazyApproval, events),
-            new EditFileTool(_terminal, lazyApproval, events),
+            new WriteFileTool(tab.Terminal, lazyApproval, events),
+            new EditFileTool(tab.Terminal, lazyApproval, events),
             new SaveMemoryTool(memory, events),
             new DeleteMemoryTool(memory, events),
             new UpdateMemoryTool(memory, events),
@@ -182,31 +325,55 @@ public partial class MainWindow
         ];
 
         var chatService = new ChatService(ChatClientFactory, guardClient, events, tools, memoryBlock, provider.SupportsWebSearch);
+        tab.ChatService = chatService;
 
-        _taskDescription = new TaskDescriptionService();
-        _taskDescription.Start(guardClient, chatService, _screenBuffer);
+        tab.TaskDescription?.Dispose();
+        tab.TaskDescription = new TaskDescriptionService();
+        tab.TaskDescription.Start(guardClient, chatService, tab.ScreenBuffer);
 
-        events.ThinkingStarted += () => Dispatcher.BeginInvoke(() => _spinner!.StartThinking());
-        events.ThinkingStopped += () => Dispatcher.BeginInvoke(() => _spinner!.Stop());
-        events.CommandStarting += () => Dispatcher.BeginInvoke(() => _spinner!.StartCommand());
+        events.ThinkingStarted += () => Dispatcher.BeginInvoke(() => tab.Spinner!.StartThinking());
+        events.ThinkingStopped += () => Dispatcher.BeginInvoke(() => tab.Spinner!.Stop());
+        events.CommandStarting += () => Dispatcher.BeginInvoke(() => tab.Spinner!.StartCommand());
 
-        _terminal.CommandCompleted += () => Dispatcher.BeginInvoke(() =>
+        tab.Terminal.CommandCompleted += () => Dispatcher.BeginInvoke(() =>
         {
-            if (ChatPanel.IsStreaming)
-                _spinner?.StartThinking();
+            if (tab.ChatPanel.IsStreaming)
+                tab.Spinner?.StartThinking();
             else
-                _spinner?.Stop();
-            _taskDescription?.SignalFirstCommand();
+                tab.Spinner?.Stop();
+            tab.TaskDescription?.SignalFirstCommand();
         });
 
-        _taskDescription.TaskChanged += _ => Dispatcher.BeginInvoke(() => UpdateTitle(_spinner?.CurrentFrame));
-        ChatPanel.UserTyping += () => _taskDescription.OnUserTyping();
+        tab.TaskDescription.TaskChanged += task =>
+        {
+            if (!tab.IsManuallyNamed && task != null)
+            {
+                tab.Title = task;
+                Dispatcher.BeginInvoke(() =>
+                {
+                    TabBar.UpdateTitle(tab.Id, task);
+                    if (tab == _activeTab)
+                        UpdateTitle(tab.Spinner?.CurrentFrame);
+                });
+            }
+        };
+        tab.ChatPanel.UserTyping += () => tab.TaskDescription?.OnUserTyping();
 
-        ChatPanel.Initialize(chatService, events, memory: memory);
-        ChatPanel.FocusPrimaryInput();
+        tab.ChatPanel.Initialize(chatService, events, memory: memory);
+        if (tab == _activeTab)
+            tab.ChatPanel.FocusPrimaryInput();
         return;
 
         IChatClient ChatClientFactory() => provider.CreateChatClient(apiKey);
+    }
+
+    private void OnStateChanged(object? sender, EventArgs e)
+    {
+        // When maximized, Windows extends the window beyond screen edges by the resize border.
+        // Compensate so content isn't clipped under the screen edge.
+        OuterGrid.Margin = WindowState == WindowState.Maximized
+            ? new Thickness(7)
+            : new Thickness(0);
     }
 
     private void OnSourceInitialized(object? sender, EventArgs e)
@@ -214,8 +381,7 @@ public partial class MainWindow
         _native.InitializeWindow(new WindowInteropHelper(this).Handle, v => Topmost = v,
             _initialProvider, OnProviderSelected);
 
-        // set terminal theme (campbell defaults, smaller font)
-        Terminal.Theme = new TerminalTheme
+        _terminalTheme = new TerminalTheme
         {
             DefaultBackground = EasyTerminalControl.ColorToVal(Color.FromRgb(0x0C, 0x0C, 0x0C)),
             DefaultForeground = EasyTerminalControl.ColorToVal(Color.FromRgb(0xCC, 0xCC, 0xCC)),
@@ -229,6 +395,9 @@ public partial class MainWindow
                 0xFF783B, 0x9E00B4, 0xD6D661, 0xF2F2F2,
             ],
         };
+
+        foreach (var tab in _tabs)
+            tab.TerminalControl.Theme = _terminalTheme;
     }
 
     private async void OnProviderSelected(AiProviderKind kind)
@@ -247,7 +416,7 @@ public partial class MainWindow
         {
             var label = kind == AiProviderKind.OpenAI ? "OpenAI" : "Anthropic";
             _pendingProviderConstraint = kind;
-            ChatPanel.Initialize(null, null, $"Enter your {label} API key", OnApiKeySubmitted);
+            _activeTab?.ChatPanel.Initialize(null, null, $"Enter your {label} API key", OnApiKeySubmitted);
         }
     }
 
@@ -259,17 +428,20 @@ public partial class MainWindow
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (_activeTab == null) return;
+        var chatPanel = _activeTab.ChatPanel;
+
         if (e.Key == Key.Escape)
         {
-            if (ChatPanel.CurrentFocus == FocusTarget.ChatLogText)
+            if (chatPanel.CurrentFocus == FocusTarget.ChatLogText)
             {
-                ChatPanel.CurrentFocus = FocusTarget.Input; // dismiss selection
+                chatPanel.CurrentFocus = FocusTarget.Input;
                 e.Handled = true;
                 return;
             }
             var handled = false;
-            if (!ChatPanel.HasActiveCard && ChatPanel.CancelStreaming()) handled = true;
-            if (_terminal.IsCommandRunning) { _terminal.SendCtrlC(); handled = true; }
+            if (!chatPanel.HasActiveCard && chatPanel.CancelStreaming()) handled = true;
+            if (_activeTab.Terminal.IsCommandRunning) { _activeTab.Terminal.SendCtrlC(); handled = true; }
             if (handled) { e.Handled = true; return; }
         }
 
@@ -277,36 +449,81 @@ public partial class MainWindow
         {
             if (e.Key == Key.Left)
             {
-                // shrink chat panel by 5%
-                var col = MainGrid.ColumnDefinitions[0];
+                var col = ContentGrid.ColumnDefinitions[0];
                 col.Width = new GridLength(Math.Max(250, col.ActualWidth - ActualWidth * 0.05));
                 e.Handled = true;
                 return;
             }
             if (e.Key == Key.Right)
             {
-                // grow chat panel by 5%, keeping at least 300px for the terminal
-                var col = MainGrid.ColumnDefinitions[0];
+                var col = ContentGrid.ColumnDefinitions[0];
                 col.Width = new GridLength(Math.Min(ActualWidth - 3 - 300, col.ActualWidth + ActualWidth * 0.05));
+                e.Handled = true;
+                return;
+            }
+
+            // Ctrl+T: new tab
+            if (e.Key == Key.T)
+            {
+                _ = CreateTab();
+                e.Handled = true;
+                return;
+            }
+
+            // Ctrl+W: close current tab
+            if (e.Key == Key.W)
+            {
+                CloseTab(_activeTab);
+                e.Handled = true;
+                return;
+            }
+
+            // Ctrl+Tab / Ctrl+Shift+Tab: next/previous tab
+            if (e.Key == Key.Tab)
+            {
+                if (_tabs.Count > 1)
+                {
+                    var idx = _tabs.IndexOf(_activeTab);
+                    if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+                        idx = (idx - 1 + _tabs.Count) % _tabs.Count;
+                    else
+                        idx = (idx + 1) % _tabs.Count;
+                    SwitchToTab(_tabs[idx]);
+                }
+                e.Handled = true;
+                return;
+            }
+
+            // Ctrl+1-9: jump to tab by index
+            var digit = KeyToDigit(e.Key);
+            if (digit >= 1 && digit <= 9)
+            {
+                if (digit <= _tabs.Count)
+                    SwitchToTab(_tabs[digit - 1]);
                 e.Handled = true;
                 return;
             }
         }
 
-        var isCtrlSpace = e.Key == Key.Space && (Keyboard.Modifiers & ModifierKeys.Control) != 0;
-        var isCtrlTab = e.Key == Key.Tab && (Keyboard.Modifiers & ModifierKeys.Control) != 0;
-        if (!isCtrlSpace && !isCtrlTab) return;
-        e.Handled = true;
-
-        // block toggle while a card needs user input
-        if (ChatPanel.HasActiveCard) return;
-
-        // toggle focus between chat input and terminal
-        if (ChatPanel.CurrentFocus == FocusTarget.Console)
-            ChatPanel.FocusPrimaryInput();
-        else
-            Terminal.Focus();
+        // Ctrl+Space: toggle focus within active tab
+        if (e.Key == Key.Space && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            e.Handled = true;
+            if (chatPanel.HasActiveCard) return;
+            if (chatPanel.CurrentFocus == FocusTarget.Console)
+                chatPanel.FocusPrimaryInput();
+            else
+                _activeTab.TerminalControl.Focus();
+        }
     }
+
+    private static int KeyToDigit(Key key) => key switch
+    {
+        Key.D1 => 1, Key.D2 => 2, Key.D3 => 3,
+        Key.D4 => 4, Key.D5 => 5, Key.D6 => 6,
+        Key.D7 => 7, Key.D8 => 8, Key.D9 => 9,
+        _ => 0
+    };
 
     private void GridSplitter_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
@@ -315,14 +532,13 @@ public partial class MainWindow
 
     private void GridSplitter_PreviewMouseUp(object sender, MouseButtonEventArgs e)
     {
-        // restore focus after splitter drag completes
         Dispatcher.BeginInvoke(() =>
         {
-            if (ChatPanel.CurrentFocus == FocusTarget.Console)
-                Terminal.Focus();
+            if (_activeTab == null) return;
+            if (_activeTab.ChatPanel.CurrentFocus == FocusTarget.Console)
+                _activeTab.TerminalControl.Focus();
             else
-                ChatPanel.FocusPrimaryInput();
+                _activeTab.ChatPanel.FocusPrimaryInput();
         });
     }
-
 }

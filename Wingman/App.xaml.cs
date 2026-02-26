@@ -71,15 +71,11 @@ public partial class App : Application
             {
                 services.AddSereneConsoleLogging();
                 services.AddSingleton<IWindowsNative, WindowsNative>();
-                services.AddSingleton<IScreenBuffer, ScreenBuffer>();
-                services.AddSingleton<ITerminal, Terminal>();
                 services.AddSingleton<ISettingsService>(settings);
 
                 services.AddSingleton<MainWindow>(sp => new MainWindow(sp.GetRequiredService<ILoggerFactory>(),
                     sp.GetRequiredService<IWindowsNative>(),
-                    sp.GetRequiredService<ITerminal>(),
                     sp.GetRequiredService<ISettingsService>(),
-                    sp.GetRequiredService<IScreenBuffer>(),
                     startupError,
                     initialProvider ?? (apiKey != null ? AiProvider.Detect(apiKey).Kind : null)));
             })

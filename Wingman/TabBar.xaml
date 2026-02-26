@@ -1,0 +1,136 @@
+<UserControl x:Class="Wingman.TabBar"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <UserControl.Resources>
+        <Style x:Key="CaptionButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#3D3D3D" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+    <Border Background="#252526" Height="32" BorderBrush="#1E1E1E" BorderThickness="0,0,0,1">
+        <DockPanel>
+            <!-- App icon / system menu -->
+            <Button x:Name="AppIconButton" DockPanel.Dock="Left"
+                    WindowChrome.IsHitTestVisibleInChrome="True"
+                    Click="OnAppIconClick"
+                    Width="36" Height="32"
+                    Background="Transparent" BorderThickness="0"
+                    Cursor="Hand" Focusable="False" FocusVisualStyle="{x:Null}">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent">
+                            <Image Source="pack://application:,,,/Wingman.ico"
+                                   Width="16" Height="16"
+                                   RenderOptions.BitmapScalingMode="HighQuality" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#3D3D3D" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+
+            <!-- Caption buttons -->
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <!-- Minimize -->
+                <Button Style="{StaticResource CaptionButtonStyle}" Click="OnMinimizeClick"
+                        ToolTip="Minimize">
+                    <Path Data="M 0,0 H 10" Stroke="#CCCCCC" StrokeThickness="1" Stretch="None" />
+                </Button>
+
+                <!-- Maximize / Restore -->
+                <Button x:Name="MaximizeButton" Style="{StaticResource CaptionButtonStyle}"
+                        Click="OnMaximizeRestoreClick" ToolTip="Maximize">
+                    <Path Data="M 0,0 H 10 V 10 H 0 Z" Stroke="#CCCCCC" StrokeThickness="1"
+                          Fill="Transparent" Stretch="None" />
+                </Button>
+
+                <!-- Close -->
+                <Button Click="OnCloseClick" ToolTip="Close"
+                        Width="46" Height="32"
+                        Background="Transparent" BorderThickness="0"
+                        Focusable="False" FocusVisualStyle="{x:Null}"
+                        WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="Transparent">
+                                <Path x:Name="Icon" Data="M 0,0 L 10,10 M 10,0 L 0,10"
+                                      Stroke="#CCCCCC" StrokeThickness="1" Stretch="None"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#C42B1C" />
+                                    <Setter TargetName="Icon" Property="Stroke" Value="White" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </StackPanel>
+
+            <!-- Tabs + new-tab button -->
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <ScrollViewer Grid.Column="0" x:Name="TabScroller"
+                              HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollBarVisibility="Disabled"
+                              Focusable="False">
+                    <StackPanel x:Name="TabPanel" Orientation="Horizontal" />
+                </ScrollViewer>
+
+                <Button Grid.Column="1" x:Name="NewTabButton"
+                        WindowChrome.IsHitTestVisibleInChrome="True"
+                        Content="+" Click="OnNewTabClick"
+                        FontSize="16" FontWeight="Bold"
+                        Width="32"
+                        Background="Transparent" Foreground="#999999"
+                        BorderThickness="0" Cursor="Hand"
+                        Focusable="False"
+                        FocusVisualStyle="{x:Null}"
+                        VerticalAlignment="Center"
+                        VerticalContentAlignment="Center"
+                        HorizontalContentAlignment="Center">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                    CornerRadius="4" Margin="2">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#3D3D3D" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+            </Grid>
+        </DockPanel>
+    </Border>
+</UserControl>

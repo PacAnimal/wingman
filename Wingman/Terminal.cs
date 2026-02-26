@@ -28,7 +28,7 @@ public interface ITerminal
     event Action? CommandCompleted;
 }
 
-public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerminal
+public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerminal, IDisposable
 {
     private const int MaxOutputLength = 65_536;
 
@@ -47,8 +47,28 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
     public bool IsCommandRunning => _commandRunning;
     public void SendCtrlC() => _term?.WriteToTerm("\x03");
 
+    private bool _disposed;
+
     public event Action? ProcessExited;
     public event Action? CommandCompleted;
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        _resetCts?.Cancel();
+        _resetCts?.Dispose();
+
+        try { _term?.CloseStdinToApp(); } catch { /* best-effort */ }
+        try { _term?.StopExternalTermOnly(); } catch { /* best-effort */ }
+
+        if (_scratchDir != null)
+        {
+            try { Directory.Delete(_scratchDir, recursive: true); } catch { /* best-effort */ }
+            _scratchDir = null;
+        }
+    }
 
     private string Sentinel { get; } = $"{Guid.NewGuid()}";
     private string FormattedSentinel => $"[{Sentinel}]";

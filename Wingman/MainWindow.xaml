@@ -4,33 +4,34 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Wingman"
-        xmlns:term="clr-namespace:EasyWindowsTerminalControl;assembly=EasyWindowsTerminalControl"
         mc:Ignorable="d"
         Title="Wingman" Icon="pack://application:,,,/Wingman.ico" Height="600" Width="1400"
         Background="#1E1E1E" Padding="0">
-    <Grid x:Name="MainGrid">
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="380" MinWidth="250" />
-            <ColumnDefinition Width="3" />
-            <ColumnDefinition Width="*" />
-        </Grid.ColumnDefinitions>
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="32"
+                      ResizeBorderThickness="4"
+                      CornerRadius="0" />
+    </WindowChrome.WindowChrome>
+    <Grid x:Name="OuterGrid">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
 
-        <local:ChatPanel x:Name="ChatPanel" Grid.Column="0" />
+        <local:TabBar x:Name="TabBar" Grid.Row="0" />
 
-        <GridSplitter x:Name="GridSplitter" Grid.Column="1" Width="3"
-                      HorizontalAlignment="Stretch" Focusable="False"
-                      Background="#333333"
-                      PreviewMouseDown="GridSplitter_PreviewMouseDown"
-                      PreviewMouseUp="GridSplitter_PreviewMouseUp" />
+        <Grid x:Name="ContentGrid" Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="380" MinWidth="250" />
+                <ColumnDefinition Width="3" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
 
-        <Border x:Name="TerminalBorder" Grid.Column="2" Background="#0C0C0C"
-                BorderThickness="1" BorderBrush="Transparent">
-            <term:EasyTerminalControl x:Name="Terminal"
-                Margin="8,0,0,0"
-                StartupCommandLine="pwsh.exe -NoProfile"
-                Win32InputMode="True"
-                InputCapture="TabKey,DirectionKeys"
-                FontSizeWhenSettingTheme="11" />
-        </Border>
+            <GridSplitter x:Name="GridSplitter" Grid.Column="1" Width="3"
+                          HorizontalAlignment="Stretch" Focusable="False"
+                          Background="#333333"
+                          PreviewMouseDown="GridSplitter_PreviewMouseDown"
+                          PreviewMouseUp="GridSplitter_PreviewMouseUp" />
+        </Grid>
     </Grid>
 </Window>
