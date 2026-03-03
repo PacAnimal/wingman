@@ -138,11 +138,16 @@ public class ChatService : IChatService
     public async IAsyncEnumerable<string> SendMessageAsync(string userMessage,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        // drain and summarize outside the semaphore to avoid holding the lock during LLM call
         var userCommands = _terminal.DrainUserCommands();
+        string? formattedCommands = null;
+        if (userCommands.Count > 0)
+            formattedCommands = await FormatUserCommandsAsync(userCommands, cancellationToken);
+
         using (var h = await _history.WaitForDisposable(cancellationToken))
         {
-            if (userCommands.Count > 0)
-                h.Value.Add(new ChatMessage(ChatRole.System, FormatUserCommands(userCommands)));
+            if (formattedCommands != null)
+                h.Value.Add(new ChatMessage(ChatRole.System, formattedCommands));
             h.Value.Add(new ChatMessage(ChatRole.User, userMessage));
         }
 
@@ -188,24 +193,102 @@ public class ChatService : IChatService
         _client = _clientFactory();
     }
 
+    private static void AppendCommand(StringBuilder sb, UserCommandInfo cmd)
+    {
+        var status = cmd.Success ? "ok" : $"failed (exit {cmd.ExitCode})";
+        sb.Append($"> {cmd.Command} — {status}, cwd: {cmd.WorkingDirectory}");
+        if (!string.IsNullOrWhiteSpace(cmd.Output))
+        {
+            var lines = cmd.Output.Split('\n');
+            if (lines.Length <= 10)
+                sb.Append('\n').Append(cmd.Output.TrimEnd());
+            else
+                sb.Append($" ({lines.Length} lines)");
+        }
+        sb.Append('\n');
+    }
+
     private static string FormatUserCommands(List<UserCommandInfo> commands)
     {
         var sb = new StringBuilder("[user terminal activity]\n");
         foreach (var cmd in commands)
-        {
-            var status = cmd.Success ? "ok" : $"failed (exit {cmd.ExitCode})";
-            sb.Append($"> {cmd.Command} — {status}, cwd: {cmd.WorkingDirectory}");
-            if (!string.IsNullOrWhiteSpace(cmd.Output))
-            {
-                var lines = cmd.Output.Split('\n');
-                if (lines.Length <= 10)
-                    sb.Append('\n').Append(cmd.Output.TrimEnd());
-                else
-                    sb.Append($" ({lines.Length} lines)");
-            }
-            sb.Append('\n');
-        }
+            AppendCommand(sb, cmd);
         return sb.ToString().TrimEnd();
+    }
+
+    // formats old commands and caps at UserCommandSummarizeMaxInputChars, truncating oldest first
+    private static string FormatOldCommands(List<UserCommandInfo> commands)
+    {
+        var sb = new StringBuilder();
+        foreach (var cmd in commands)
+            AppendCommand(sb, cmd);
+
+        var text = sb.ToString();
+        if (text.Length <= Constants.UserCommandSummarizeMaxInputChars)
+            return text;
+
+        // truncate from the start (oldest), snap to newline boundary
+        var trimmed = text[(text.Length - Constants.UserCommandSummarizeMaxInputChars)..];
+        var nl = trimmed.IndexOf('\n');
+        if (nl >= 0) trimmed = trimmed[(nl + 1)..];
+        return "[...earlier commands omitted...]\n" + trimmed;
+    }
+
+    private async Task<string> SummarizeOldCommandsAsync(List<UserCommandInfo> commands, CancellationToken ct)
+    {
+        var input = FormatOldCommands(commands);
+        var prompt = $"Summarize these {commands.Count} terminal commands — what was done, what succeeded/failed, final cwd. Be concise.\n\n{input}";
+
+        using var timeout = new CancellationTokenSource(Constants.GuardTimeoutMs);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, ct);
+        var summarizeOptions = new ChatOptions { MaxOutputTokens = 2000 };
+        var response = await _guardClient.GetResponseAsync(
+            [new ChatMessage(ChatRole.User, prompt)],
+            summarizeOptions,
+            linked.Token);
+
+        return response.Text ?? "";
+    }
+
+    // fallback: keep tail of old commands capped at UserCommandFallbackMaxChars
+    private static string TruncateOldCommands(List<UserCommandInfo> commands)
+    {
+        var sb = new StringBuilder();
+        foreach (var cmd in commands)
+            AppendCommand(sb, cmd);
+
+        var text = sb.ToString();
+        if (text.Length <= Constants.UserCommandFallbackMaxChars)
+            return "[summary unavailable]\n" + text;
+
+        var trimmed = text[(text.Length - Constants.UserCommandFallbackMaxChars)..];
+        var nl = trimmed.IndexOf('\n');
+        if (nl >= 0) trimmed = trimmed[(nl + 1)..];
+        return "[summary unavailable — showing most recent]\n" + trimmed;
+    }
+
+    private async Task<string> FormatUserCommandsAsync(List<UserCommandInfo> commands, CancellationToken ct)
+    {
+        if (commands.Count <= Constants.UserCommandSummarizeThreshold)
+            return FormatUserCommands(commands);
+
+        var oldCommands = commands[..^Constants.UserCommandSummarizeThreshold];
+        var recentCommands = commands[^Constants.UserCommandSummarizeThreshold..];
+
+        string summary;
+        try
+        {
+            summary = await SummarizeOldCommandsAsync(oldCommands, ct);
+            if (string.IsNullOrWhiteSpace(summary))
+                summary = TruncateOldCommands(oldCommands);
+        }
+        catch
+        {
+            summary = TruncateOldCommands(oldCommands);
+        }
+
+        var recentText = FormatUserCommands(recentCommands);
+        return $"[user terminal activity — {commands.Count} commands, oldest {oldCommands.Count} summarized]\n{summary}\n\n[recent commands]\n{recentText}";
     }
 
     private List<ChatMessage> BuildApiHistory(List<ChatMessage> history)

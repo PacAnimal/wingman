@@ -19,4 +19,9 @@ internal static class Constants
     internal const int ContextSummarizeThreshold = 100;
     // keep last N messages verbatim; everything older gets summarized
     internal const int ContextRecentToKeep = 80;
+
+    // user terminal command summarization
+    internal const int UserCommandSummarizeThreshold = 20;
+    internal const int UserCommandSummarizeMaxInputChars = 16_000;
+    internal const int UserCommandFallbackMaxChars = 4_000;
 }
