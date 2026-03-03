@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
@@ -14,6 +15,7 @@ namespace Wingman;
 
 // ReSharper disable NotAccessedPositionalProperty.Global
 public record CommandResult(string Command, string Output, int ExitCode, bool Success, string WorkingDirectory, bool Truncated, string Duration);
+public record UserCommandInfo(string Command, string Output, int ExitCode, bool Success, string WorkingDirectory);
 // ReSharper restore NotAccessedPositionalProperty.Global
 
 public interface ITerminal
@@ -26,6 +28,7 @@ public interface ITerminal
     string ScratchDir { get; }
     event Action? ProcessExited;
     event Action? CommandCompleted;
+    List<UserCommandInfo> DrainUserCommands();
 }
 
 public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerminal, IDisposable
@@ -42,6 +45,9 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
     private int _generation;
     private CancellationTokenSource? _resetCts;
     private volatile bool _commandRunning;
+    private int _userCommandOffset;
+    private string _lastHistoryCommand = "";
+    private readonly ConcurrentQueue<UserCommandInfo> _pendingUserCommands = new();
 
     public string ScratchDir => _scratchDir ?? throw new InvalidOperationException("Terminal not ready");
     public bool IsCommandRunning => _commandRunning;
@@ -56,6 +62,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
     {
         if (_disposed) return;
         _disposed = true;
+        GC.SuppressFinalize(this);
 
         _resetCts?.Cancel();
         _resetCts?.Dispose();
@@ -109,10 +116,15 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
         ++_generation;
         _termStarted = new TaskCompletionSource();
         while (_sentinels.Reader.TryRead(out _)) { }
+        while (_pendingUserCommands.TryDequeue(out _)) { }
+        _lastHistoryCommand = "";
         screenBuffer.Reset();
 
         using (var buf = await _outputBuffer.WaitForDisposable())
+        {
             buf.Value.Clear();
+            _userCommandOffset = 0;
+        }
 
         if (_scratchDir != null)
         {
@@ -201,6 +213,8 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
                                    $wm_ok = $?
                                    $wm_code = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
                                    $wm_cwd = $PWD.Path
+                                   $wm_cmd = if ($h = Get-History -Count 1) { $h.CommandLine } else { '' }
+                                   $wm_cmd = ($wm_cmd -replace '[\r\n]+', ' ')
                                    $wm_s = "${WINGMAN_SENTINEL_LEFT}${WINGMAN_SENTINEL_RIGHT}"
                                    $wm_exit = "${wm_code}|${wm_ok}"
                                    function wm_hide($t) { Write-Host "`e[30m${t}`e[0m`r$(' ' * $t.Length)`r" -NoNewline }
@@ -209,15 +223,21 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
                                    wm_hide $wm_s
                                    wm_hide $wm_cwd
                                    wm_hide $wm_s
+                                   wm_hide $wm_cmd
+                                   wm_hide $wm_s
                                    "PS $($executionContext.SessionState.Path.CurrentLocation)> "
                                }
                                [Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory(); clear; Write-Host "`nWingman ready!`n" -ForegroundColor Green
                                """);
 
-                // drain init sentinels - prompt fires twice during init, 3 sentinels each
-                await WaitForSentinel(6);
+                // drain init sentinels - prompt fires twice during init, 4 sentinels each
+                await WaitForSentinel(8);
 
                 if (_generation != gen) return;
+                // skip init output — user commands start from here
+                using (var buf = await _outputBuffer.WaitForDisposable())
+                    _userCommandOffset = buf.Value.Length;
+
                 _resetCts = new CancellationTokenSource();
                 initComplete.TrySetResult();
             });
@@ -239,19 +259,23 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
         _commandRunning = true;
         try
         {
-            // gobble stale sentinels from user interaction or background prompt renders
-            var drained = 0;
-            while (_sentinels.Reader.TryRead(out var stale)) drained++;
-            if (drained > 0) log.LogDebug("Drained {Count} stale sentinel(s)", drained);
-
             int offset;
             using (var buf = await _outputBuffer.WaitForDisposable())
+            {
+                // capture any user commands from stale buffer content before recording offset
+                ParseUserCommands(buf.Value);
                 offset = buf.Value.Length;
+            }
+
+            // drain stale sentinel signals — already processed as user commands above
+            var drained = 0;
+            while (_sentinels.Reader.TryRead(out bool stale)) drained++;
+            if (drained > 0) log.LogDebug("Drained {Count} stale sentinel(s)", drained);
 
             var sw = Stopwatch.StartNew();
             WriteCommand(command);
 
-            // wait until all 3 sentinels appear in buffer after offset; cancellable via reset or timeout
+            // wait until all 4 sentinels appear in buffer after offset; cancellable via reset or timeout
             using var timeout = new CancellationTokenSource(Constants.CommandTimeoutMs);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, _resetCts!.Token);
             var sentinelLen = FormattedSentinel.Length;
@@ -270,14 +294,20 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
                 if (s2 < 0) continue;
                 var s3 = buffer.IndexOf(FormattedSentinel, s2 + sentinelLen, StringComparison.Ordinal);
                 if (s3 < 0) continue;
+                var s4 = buffer.IndexOf(FormattedSentinel, s3 + sentinelLen, StringComparison.Ordinal);
+                if (s4 < 0) continue;
 
                 var output = buffer[offset..s1];
                 var exitRaw = buffer[(s1 + sentinelLen)..s2];
                 var cwdRaw = buffer[(s2 + sentinelLen)..s3];
+                // s3-s4 holds the command echo; ignored here since RunCommand knows its own command
 
                 // trim consumed portion to prevent indefinite growth
                 using (var buf = await _outputBuffer.WaitForDisposable(linked.Token))
-                    buf.Value.Remove(0, s3 + sentinelLen);
+                {
+                    buf.Value.Remove(0, s4 + sentinelLen);
+                    _userCommandOffset = Math.Max(0, _userCommandOffset - (s4 + sentinelLen));
+                }
 
                 // strip the echoed command (first line)
                 var firstNewline = output.IndexOf('\n');
@@ -303,6 +333,74 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
         {
             _commandRunning = false;
         }
+    }
+
+    // scan buffer for complete sentinel groups since _userCommandOffset; must be called under _outputBuffer semaphore
+    private void ParseUserCommands(StringBuilder buf)
+    {
+        var sentinel = FormattedSentinel;
+        var sentinelLen = sentinel.Length;
+        var text = buf.ToString();
+        var pos = _userCommandOffset;
+
+        while (true)
+        {
+            var s1 = text.IndexOf(sentinel, pos, StringComparison.Ordinal);
+            if (s1 < 0) break;
+            var s2 = text.IndexOf(sentinel, s1 + sentinelLen, StringComparison.Ordinal);
+            if (s2 < 0) break;
+            var s3 = text.IndexOf(sentinel, s2 + sentinelLen, StringComparison.Ordinal);
+            if (s3 < 0) break;
+            var s4 = text.IndexOf(sentinel, s3 + sentinelLen, StringComparison.Ordinal);
+            if (s4 < 0) break;
+
+            var region = text[pos..s1];
+            var exitRaw = text[(s1 + sentinelLen)..s2];
+            var cwdRaw = text[(s2 + sentinelLen)..s3];
+            var cmdRaw = text[(s3 + sentinelLen)..s4];
+
+            // strip echoed command (first line) from output
+            var nl = region.IndexOf('\n');
+            var output = nl >= 0 ? region[(nl + 1)..] : "";
+
+            var command = ExtractHiddenData(cmdRaw);
+
+            var exitParts = ExtractHiddenData(exitRaw).Split('|');
+            var exitCode = int.TryParse(exitParts.Length > 0 ? exitParts[0] : null, out var parsedCode) ? parsedCode : 0;
+            var success = !bool.TryParse(exitParts.Length > 1 ? exitParts[1] : null, out var parsedSuccess) || parsedSuccess;
+            var cwd = ExtractHiddenData(cwdRaw);
+
+            pos = s4 + sentinelLen;
+
+            // skip empty-enter repeats (Get-History returns last command when nothing was typed)
+            if (!string.IsNullOrWhiteSpace(command) && command != _lastHistoryCommand)
+            {
+                _lastHistoryCommand = command;
+                var trimmedOutput = output.Trim();
+                if (trimmedOutput.Length > MaxOutputLength) trimmedOutput = trimmedOutput[..MaxOutputLength];
+                _pendingUserCommands.Enqueue(new UserCommandInfo(command, trimmedOutput, exitCode, success, cwd));
+            }
+        }
+
+        _userCommandOffset = pos;
+    }
+
+    public List<UserCommandInfo> DrainUserCommands()
+    {
+        using var buf = _outputBuffer.WaitForDisposable().GetAwaiter().GetResult();
+        ParseUserCommands(buf.Value);
+
+        // trim buffer if no command is running — safe because _commandRunning is set before RunCommand acquires this semaphore
+        if (!_commandRunning && _userCommandOffset > 0)
+        {
+            buf.Value.Remove(0, _userCommandOffset);
+            _userCommandOffset = 0;
+        }
+
+        var result = new List<UserCommandInfo>();
+        while (_pendingUserCommands.TryDequeue(out var cmd))
+            result.Add(cmd);
+        return result;
     }
 
     private static string ExtractHiddenData(string raw)

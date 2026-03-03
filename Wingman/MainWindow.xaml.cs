@@ -92,7 +92,7 @@ public partial class MainWindow
         TabBar.SetActiveTab(firstTab.Id);
     }
 
-    private async Task InitTabTerminal(TabSession tab)
+    private static async Task InitTabTerminal(TabSession tab)
     {
         await tab.Terminal.Init(tab.TerminalControl);
         if (!tab.TerminalControl.IsKeyboardFocusWithin)
@@ -324,7 +324,7 @@ public partial class MainWindow
             new ListMemoryTool(memory, events),
         ];
 
-        var chatService = new ChatService(ChatClientFactory, guardClient, events, tools, memoryBlock, provider.SupportsWebSearch);
+        var chatService = new ChatService(ChatClientFactory, guardClient, events, tools, memoryBlock, tab.Terminal, provider.SupportsWebSearch);
         tab.ChatService = chatService;
 
         tab.TaskDescription?.Dispose();
@@ -519,9 +519,15 @@ public partial class MainWindow
 
     private static int KeyToDigit(Key key) => key switch
     {
-        Key.D1 => 1, Key.D2 => 2, Key.D3 => 3,
-        Key.D4 => 4, Key.D5 => 5, Key.D6 => 6,
-        Key.D7 => 7, Key.D8 => 8, Key.D9 => 9,
+        Key.D1 => 1,
+        Key.D2 => 2,
+        Key.D3 => 3,
+        Key.D4 => 4,
+        Key.D5 => 5,
+        Key.D6 => 6,
+        Key.D7 => 7,
+        Key.D8 => 8,
+        Key.D9 => 9,
         _ => 0
     };
 

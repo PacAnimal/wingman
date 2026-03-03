@@ -20,7 +20,7 @@ public partial class TabBar : UserControl
     public event Action? NewTabRequested;
     public event Action<Guid, string>? TabRenamed;
 
-    private readonly Dictionary<Guid, TabItemData> _tabs = new();
+    private readonly Dictionary<Guid, TabItemData> _tabs = [];
     private Guid? _activeTabId;
 
     private static readonly Geometry MaximizeGeometry = Geometry.Parse("M 0,0 H 10 V 10 H 0 Z");
@@ -202,7 +202,7 @@ public partial class TabBar : UserControl
         NewTabRequested?.Invoke();
     }
 
-    private void StartRename(TabItemData data)
+    private static void StartRename(TabItemData data)
     {
         data.RenameBox.Text = data.TitleText.Text;
         data.TitleText.Visibility = Visibility.Collapsed;
@@ -224,7 +224,7 @@ public partial class TabBar : UserControl
         data.TitleText.Visibility = Visibility.Visible;
     }
 
-    private void CancelRename(TabItemData data)
+    private static void CancelRename(TabItemData data)
     {
         data.RenameBox.Visibility = Visibility.Collapsed;
         data.TitleText.Visibility = Visibility.Visible;

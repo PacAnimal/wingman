@@ -39,7 +39,7 @@ public sealed class AiProvider
             .AsBuilder()
             .UseFunctionInvocation()
             .Build(),
-        _ => throw new ArgumentOutOfRangeException()
+        _ => throw new ArgumentOutOfRangeException(nameof(apiKey), $"Unsupported provider kind: {Kind}")
     };
 
     public IChatClient CreateGuardClient(string apiKey) => Kind switch
@@ -49,6 +49,6 @@ public sealed class AiProvider
             .AsIChatClient(),
         AiProviderKind.Anthropic => new AnthropicClient { ApiKey = apiKey }
             .AsIChatClient(GuardModel),
-        _ => throw new ArgumentOutOfRangeException()
+        _ => throw new ArgumentOutOfRangeException(nameof(apiKey), $"Unsupported provider kind: {Kind}")
     };
 }

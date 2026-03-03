@@ -16,6 +16,7 @@ public class ChatService : IChatService
 {
     private readonly Func<IChatClient> _clientFactory;
     private readonly IChatClient _guardClient;
+    private readonly ITerminal _terminal;
     private readonly ChatOptions _options;
     private readonly SemaphoreSlimValue<List<ChatMessage>> _history = new([], disposeValue: false);
     private IChatClient _client;
@@ -33,10 +34,11 @@ public class ChatService : IChatService
         }
     }
 
-    public ChatService(Func<IChatClient> clientFactory, IChatClient guardClient, AgentEvents events, IEnumerable<IAgentTool> tools, string memoryBlock, bool supportsWebSearch = true)
+    public ChatService(Func<IChatClient> clientFactory, IChatClient guardClient, AgentEvents events, IEnumerable<IAgentTool> tools, string memoryBlock, ITerminal terminal, bool supportsWebSearch = true)
     {
         _clientFactory = clientFactory;
         _guardClient = guardClient;
+        _terminal = terminal;
         _client = clientFactory();
         events.ToolResultLogged += async summary =>
         {
@@ -136,8 +138,13 @@ public class ChatService : IChatService
     public async IAsyncEnumerable<string> SendMessageAsync(string userMessage,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
+        var userCommands = _terminal.DrainUserCommands();
         using (var h = await _history.WaitForDisposable(cancellationToken))
+        {
+            if (userCommands.Count > 0)
+                h.Value.Add(new ChatMessage(ChatRole.System, FormatUserCommands(userCommands)));
             h.Value.Add(new ChatMessage(ChatRole.User, userMessage));
+        }
 
         await SummarizeIfNeeded(cancellationToken);
 
@@ -179,6 +186,26 @@ public class ChatService : IChatService
         _summarizedUpToIndex = 0;
         // fresh client breaks the Responses API response chain (server-side state)
         _client = _clientFactory();
+    }
+
+    private static string FormatUserCommands(List<UserCommandInfo> commands)
+    {
+        var sb = new StringBuilder("[user terminal activity]\n");
+        foreach (var cmd in commands)
+        {
+            var status = cmd.Success ? "ok" : $"failed (exit {cmd.ExitCode})";
+            sb.Append($"> {cmd.Command} — {status}, cwd: {cmd.WorkingDirectory}");
+            if (!string.IsNullOrWhiteSpace(cmd.Output))
+            {
+                var lines = cmd.Output.Split('\n');
+                if (lines.Length <= 10)
+                    sb.Append('\n').Append(cmd.Output.TrimEnd());
+                else
+                    sb.Append($" ({lines.Length} lines)");
+            }
+            sb.Append('\n');
+        }
+        return sb.ToString().TrimEnd();
     }
 
     private List<ChatMessage> BuildApiHistory(List<ChatMessage> history)

@@ -98,7 +98,7 @@ public partial class WindowsNative : IWindowsNative
         AppendMenu(menu, MF_STRING, WM_SYSCOMMAND_ALWAYS_ON_TOP, "Always on top");
     }
 
-    private void AddCustomMenuItems(IntPtr hwnd, AiProviderKind? currentProvider)
+    private static void AddCustomMenuItems(IntPtr hwnd, AiProviderKind? currentProvider)
     {
         var menu = GetSystemMenu(hwnd, false);
 
@@ -116,7 +116,7 @@ public partial class WindowsNative : IWindowsNative
             var id = currentProvider == AiProviderKind.OpenAI
                 ? WM_SYSCOMMAND_PROVIDER_OPENAI
                 : WM_SYSCOMMAND_PROVIDER_ANTHROPIC;
-            CheckMenuItem(sub, id, MF_BYCOMMAND | MF_CHECKED);
+            _ = CheckMenuItem(sub, id, MF_BYCOMMAND | MF_CHECKED);
         }
 
         // always on top
@@ -134,9 +134,9 @@ public partial class WindowsNative : IWindowsNative
     {
         var menu = GetSystemMenu(hwnd, false);
         // find the submenu by scanning — the submenu items are at fixed command IDs
-        CheckMenuItem(menu, WM_SYSCOMMAND_PROVIDER_OPENAI,
+        _ = CheckMenuItem(menu, WM_SYSCOMMAND_PROVIDER_OPENAI,
             MF_BYCOMMAND | (provider == AiProviderKind.OpenAI ? MF_CHECKED : MF_UNCHECKED));
-        CheckMenuItem(menu, WM_SYSCOMMAND_PROVIDER_ANTHROPIC,
+        _ = CheckMenuItem(menu, WM_SYSCOMMAND_PROVIDER_ANTHROPIC,
             MF_BYCOMMAND | (provider == AiProviderKind.Anthropic ? MF_CHECKED : MF_UNCHECKED));
     }
 
