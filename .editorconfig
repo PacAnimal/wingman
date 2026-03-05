@@ -1,6 +1,9 @@
 root = true
 
 [*.cs]
+# Allow .Add() calls instead of collection initializers (Rider CA2000 conflicts with initializer form)
+dotnet_style_collection_initializer = false
+
 # Suppress CA1859: Use concrete type for improved performance (interface field is intentional)
 dotnet_diagnostic.CA1859.severity = none
 
