@@ -20,7 +20,7 @@ public record UserCommandInfo(string Command, string Output, int ExitCode, bool 
 
 public interface ITerminal
 {
-    Task Init(EasyTerminalControl terminalControl);
+    Task Init(EasyTerminalControl terminalControl, int cols = 80, int rows = 24);
     Task Reset();
     Task<CommandResult> RunCommand(string command);
     bool IsCommandRunning { get; }
@@ -80,14 +80,14 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
     private string Sentinel { get; } = $"{Guid.NewGuid()}";
     private string FormattedSentinel => $"[{Sentinel}]";
 
-    public async Task Init(EasyTerminalControl terminalControl)
+    public async Task Init(EasyTerminalControl terminalControl, int cols = 80, int rows = 24)
     {
         _terminalControl = terminalControl;
         var conPty = terminalControl.DisconnectConPTYTerm();
         ++_generation;
 
         // initial viewport size matches the conPty.Start() call below
-        screenBuffer.Resize(24, 80);
+        screenBuffer.Resize(rows, cols);
         // debounce: wait 300ms after last resize, then wipe + repopulate from UIA
         var resizeTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
         resizeTimer.Tick += (_, _) =>
@@ -103,7 +103,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
             resizeTimer.Start();
         };
 
-        await InitCore(conPty);
+        await InitCore(conPty, cols, rows);
     }
 
     public async Task Reset()
@@ -144,10 +144,11 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
         _resetCts?.Dispose();
         _resetCts = null;
 
-        await InitCore(new TermPTY());
+        var t = _terminalControl!.Terminal;
+        await InitCore(new TermPTY(), t?.Columns ?? 80, t?.Rows ?? 24);
     }
 
-    private async Task InitCore(TermPTY conPty)
+    private async Task InitCore(TermPTY conPty, int cols, int rows)
     {
         var gen = _generation;
 
@@ -186,8 +187,16 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
             // block until HWND is ready — Start() can't reach ReadOutputLoop() until we return
             hwndReady.Task.Wait();
 
-            // re-attach to display
-            _terminalControl.Dispatcher.Invoke(() => _terminalControl.ConPTYTerm = conPty);
+            // attach to display; Term_TermReady fires synchronously and calls ConPTYTerm.Resize(Terminal.Columns, Terminal.Rows)
+            // but for hidden tabs WM_WINDOWPOSCHANGED hasn't fired yet so Terminal.Columns=0 — restore correct dimensions
+            _terminalControl!.Dispatcher.Invoke(() =>
+            {
+                _terminalControl.ConPTYTerm = conPty;
+                var c = _terminalControl.Terminal?.Columns ?? 0;
+                var r = _terminalControl.Terminal?.Rows ?? 0;
+                if (c <= 0 || r <= 0)
+                    conPty.Resize(cols, rows);
+            });
 
             // only fire ProcessExited for the current generation's process
             _ = Task.Run(() => { conPty.Process?.WaitForExit(); if (_generation == gen) ProcessExited?.Invoke(); });
@@ -227,7 +236,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
                                    wm_hide $wm_s
                                    "PS $($executionContext.SessionState.Path.CurrentLocation)> "
                                }
-                               [Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory(); clear; Write-Host "`nWingman ready!`n" -ForegroundColor Green
+                               [Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory()
                                """);
 
                 // drain init sentinels - prompt fires twice during init, 4 sentinels each
@@ -243,7 +252,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
             });
         };
 
-        _ = Task.Run(() => conPty.Start("pwsh.exe -NoProfile", 80, 24, factory: new DetachedProcessFactory()));
+        _ = Task.Run(() => conPty.Start("pwsh.exe -NoProfile", cols, rows, factory: new DetachedProcessFactory()));
 
         await initComplete.Task;
 

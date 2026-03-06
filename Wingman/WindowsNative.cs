@@ -22,6 +22,7 @@ public interface IWindowsNative
     void UpdateProviderCheck(IntPtr hwnd, AiProviderKind provider);
     void HookPreprocessMessage(Func<bool> isChatLogActive, Func<string?> getTerminalSelection, Action focusTerminal);
     void UnhookPreprocessMessage();
+    void FlashWindow(Window window);
 }
 
 public partial class WindowsNative : IWindowsNative
@@ -66,6 +67,23 @@ public partial class WindowsNative : IWindowsNative
 
     [LibraryImport("dwmapi.dll")]
     private static partial int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FLASHWINFO
+    {
+        public uint cbSize;
+        public IntPtr hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
+    }
+
+    private const uint FLASHW_TRAY = 0x00000002;
+    private const uint FLASHW_TIMERNOFG = 0x0000000C;
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool FlashWindowEx(ref FLASHWINFO pwfi);
 
     public bool ProbeConPTY()
     {
@@ -185,6 +203,20 @@ public partial class WindowsNative : IWindowsNative
 
     public void UnhookPreprocessMessage() => ComponentDispatcher.ThreadPreprocessMessage -= OnPreprocessMessage;
 
+    public void FlashWindow(Window window)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        var fwi = new FLASHWINFO
+        {
+            cbSize = (uint)Marshal.SizeOf<FLASHWINFO>(),
+            hwnd = hwnd,
+            dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG,
+            uCount = uint.MaxValue,
+            dwTimeout = 0
+        };
+        FlashWindowEx(ref fwi);
+    }
+
     private void OnPreprocessMessage(ref MSG msg, ref bool handled)
     {
         if (IsCtrlCKeyDown(ref msg))
@@ -193,7 +225,8 @@ public partial class WindowsNative : IWindowsNative
             if (_isChatLogActive!()) return;
             var selected = _getTerminalSelection!();
             if (string.IsNullOrEmpty(selected)) return;
-            Clipboard.SetText(selected);
+            try { Clipboard.SetText(selected); }
+            catch (System.Runtime.InteropServices.COMException) { /* clipboard locked by another app */ }
             handled = true; // suppress ^C — don't let it reach the terminal
             return;
         }

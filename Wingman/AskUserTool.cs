@@ -19,6 +19,7 @@ public class AskUserTool(Lazy<ChatPanel> chatPanel, AgentEvents events) : IAgent
             return Task.FromResult("Error: options must contain between 1 and 9 items.");
 
         events.RaiseToolStarted();
+        events.RaiseCardWaitStarted();
 
         var panel = chatPanel.Value;
         var tcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -89,6 +90,7 @@ public class AskUserTool(Lazy<ChatPanel> chatPanel, AgentEvents events) : IAgent
 
         return tcs.Task.ContinueWith(t =>
         {
+            events.RaiseCardWaitEnded();
             var selection = t.Result;
             events.RaiseToolResult(selection != null ? $"[tool] asked user — chose \"{selection}\"" : "[tool] asked user — no selection");
             return selection ?? "User aborted — they may want to provide further input instead";

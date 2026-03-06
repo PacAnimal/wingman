@@ -13,6 +13,8 @@ public sealed class AgentEvents
     public event Action? ThinkingStarted;
     public event Action? ThinkingStopped;
     public event Action? CommandStarting;
+    public event Action? CardWaitStarted;
+    public event Action? CardWaitEnded;
 
     internal void RaiseToolStarted() => ToolStarted?.Invoke();
     internal void RaiseToolActivity(string message) { ToolStarted?.Invoke(); ToolActivity?.Invoke(message); }
@@ -20,4 +22,6 @@ public sealed class AgentEvents
     internal void RaiseThinkingStarted() => ThinkingStarted?.Invoke();
     internal void RaiseThinkingStopped() => ThinkingStopped?.Invoke();
     internal void RaiseCommandStarting() => CommandStarting?.Invoke();
+    internal void RaiseCardWaitStarted() => CardWaitStarted?.Invoke();
+    internal void RaiseCardWaitEnded() => CardWaitEnded?.Invoke();
 }

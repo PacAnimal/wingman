@@ -18,7 +18,13 @@ public partial class MainWindow
     private readonly ISettingsService _settings;
     private readonly AiProviderKind? _initialProvider;
     private readonly List<TabSession> _tabs = [];
+    private readonly HashSet<Guid> _workingWhenLeft = [];
     private TabSession? _activeTab;
+    private readonly List<TabSession> _spareTabs = [];
+    private readonly SemaphoreSlim _spareInitLock = new(1, 1);
+    private readonly HashSet<Guid> _highlightedTabs = [];
+    private int _spareGeneration;
+    private bool _firstTabReady;
     private FocusTarget _focusBeforeCard;
     private AiProviderKind? _pendingProviderConstraint;
     private string? _startupError;
@@ -66,7 +72,7 @@ public partial class MainWindow
                 tab.Title = newTitle;
                 tab.IsManuallyNamed = true;
                 if (tab == _activeTab)
-                    UpdateTitle(tab.Spinner?.CurrentFrame);
+                    UpdateTitle();
             }
         };
 
@@ -80,6 +86,7 @@ public partial class MainWindow
         StateChanged += OnStateChanged;
         Loaded += (_, _) => _activeTab?.ChatPanel.FocusPrimaryInput();
         Closing += (_, _) => Hide();
+        Deactivated += (_, _) => { if (_highlightedTabs.Count > 0) _native.FlashWindow(this); };
 
         // Create first tab synchronously — Init must disconnect ConPTY before Show/Loaded fires
         var firstTab = CreateTabSession();
@@ -92,39 +99,128 @@ public partial class MainWindow
         TabBar.SetActiveTab(firstTab.Id);
     }
 
-    private static async Task InitTabTerminal(TabSession tab)
+    private async Task InitTabTerminal(TabSession tab)
     {
         await tab.Terminal.Init(tab.TerminalControl);
         if (!tab.TerminalControl.IsKeyboardFocusWithin)
             tab.TerminalControl.IsCursorVisible = false;
+
+        _ = tab.Terminal.RunCommand("clear; Write-Host \"`nWingman ready!`n\" -ForegroundColor Green");
+
+        _firstTabReady = true;
+        _ = InitSpareTab();
+        _ = InitSpareTab();
     }
 
-    private async Task CreateTab()
+    private Task CreateTab()
+    {
+        if (_spareTabs.Count > 0)
+        {
+            var spare = _spareTabs[0];
+            _spareTabs.RemoveAt(0);
+            _tabs.Add(spare);
+            TabBar.AddTab(spare.Id, spare.Title);
+            SwitchToTab(spare);
+            // clear+welcome runs here (not during init) so the renderer is already correctly sized
+            _ = spare.Terminal.RunCommand("clear; Write-Host \"`nWingman ready!`n\" -ForegroundColor Green");
+            _ = InitSpareTab();
+            return Task.CompletedTask;
+        }
+        return CreateTabFresh();
+    }
+
+    private async Task CreateTabFresh()
     {
         var tab = CreateTabSession();
         _tabs.Add(tab);
         TabBar.AddTab(tab.Id, tab.Title);
 
-        // Hide until SwitchToTab — prevents overlap with current tab
+        // hide until SwitchToTab — prevents overlap with current tab
         tab.ChatPanel.Visibility = Visibility.Hidden;
         tab.TerminalBorder.Visibility = Visibility.Hidden;
         ContentGrid.Children.Add(tab.ChatPanel);
         ContentGrid.Children.Add(tab.TerminalBorder);
 
+        var cols = _activeTab?.TerminalControl.Terminal?.Columns ?? 80;
+        var rows = _activeTab?.TerminalControl.Terminal?.Rows ?? 24;
+        await tab.Terminal.Init(tab.TerminalControl, cols, rows);
         if (_terminalTheme != null)
             tab.TerminalControl.Theme = _terminalTheme;
-
-        await tab.Terminal.Init(tab.TerminalControl);
         if (!tab.TerminalControl.IsKeyboardFocusWithin)
             tab.TerminalControl.IsCursorVisible = false;
 
-        // Activate AI if key available
         var stored = await _settings.LoadAsync();
         var apiKey = stored.EffectiveApiKey;
         if (!string.IsNullOrEmpty(apiKey))
             await ActivateAi(apiKey, tab);
 
         SwitchToTab(tab);
+        // clear+welcome runs here (not during init) so the renderer is already correctly sized
+        _ = tab.Terminal.RunCommand("clear; Write-Host \"`nWingman ready!`n\" -ForegroundColor Green");
+        _ = InitSpareTab();
+    }
+
+    private async Task InitSpareTab()
+    {
+        var gen = _spareGeneration;
+        await _spareInitLock.WaitAsync();
+        TabSession? tab = null;
+        try
+        {
+            if (_spareGeneration != gen || _spareTabs.Count >= 2) return;
+
+            tab = CreateTabSession();
+            tab.ChatPanel.Visibility = Visibility.Hidden;
+            tab.TerminalBorder.Visibility = Visibility.Hidden;
+            ContentGrid.Children.Add(tab.ChatPanel);
+            ContentGrid.Children.Add(tab.TerminalBorder);
+
+            var cols = _activeTab?.TerminalControl.Terminal?.Columns ?? 80;
+            var rows = _activeTab?.TerminalControl.Terminal?.Rows ?? 24;
+            await tab.Terminal.Init(tab.TerminalControl, cols, rows);
+            if (_spareGeneration != gen) return;
+
+            if (_terminalTheme != null)
+                tab.TerminalControl.Theme = _terminalTheme;
+            if (!tab.TerminalControl.IsKeyboardFocusWithin)
+                tab.TerminalControl.IsCursorVisible = false;
+
+            var stored = await _settings.LoadAsync();
+            if (_spareGeneration != gen) return;
+
+            var apiKey = stored.EffectiveApiKey;
+            if (!string.IsNullOrEmpty(apiKey))
+                await ActivateAi(apiKey, tab);
+            if (_spareGeneration != gen) return;
+
+            if (_spareTabs.Count < 2)
+            {
+                _spareTabs.Add(tab);
+                tab = null; // ownership transferred
+            }
+        }
+        finally
+        {
+            _spareInitLock.Release();
+            if (tab != null)
+            {
+                ContentGrid.Children.Remove(tab.ChatPanel);
+                ContentGrid.Children.Remove(tab.TerminalBorder);
+                tab.Dispose();
+            }
+        }
+    }
+
+    private void DisposeSpares()
+    {
+        _spareGeneration++; // abort in-flight inits
+        foreach (var spare in _spareTabs)
+        {
+            ContentGrid.Children.Remove(spare.ChatPanel);
+            ContentGrid.Children.Remove(spare.TerminalBorder);
+            spare.Dispose();
+        }
+        _spareTabs.Clear();
     }
 
     private TabSession CreateTabSession()
@@ -178,8 +274,14 @@ public partial class MainWindow
 
         tab.Spinner = new TitleSpinner(frame =>
         {
+            var tabTitle = tab.IsManuallyNamed ? tab.Title
+                : tab.TaskDescription?.CurrentTask ?? (tab.Title != "New Tab" ? tab.Title : null);
+            TabBar.UpdateTitle(tab.Id, tabTitle ?? tab.Title, frame);
+
             if (tab == _activeTab)
-                UpdateTitle(frame);
+                UpdateTitle();
+            else
+                UpdateTaskbar();
         });
 
         return tab;
@@ -194,14 +296,21 @@ public partial class MainWindow
             _activeTab.LastFocus = _activeTab.ChatPanel.CurrentFocus;
             _activeTab.ChatPanel.Visibility = Visibility.Hidden;
             _activeTab.TerminalBorder.Visibility = Visibility.Hidden;
+            if (_activeTab.Spinner?.CurrentFrame != null)
+                _workingWhenLeft.Add(_activeTab.Id);
+            else
+                _workingWhenLeft.Remove(_activeTab.Id);
         }
 
         _activeTab = tab;
+        TabBar.ClearHighlight(tab.Id);
+        _highlightedTabs.Remove(tab.Id);
+        _workingWhenLeft.Remove(tab.Id);
         tab.ChatPanel.Visibility = Visibility.Visible;
         tab.TerminalBorder.Visibility = Visibility.Visible;
 
         TabBar.SetActiveTab(tab.Id);
-        UpdateTitle(tab.Spinner?.CurrentFrame);
+        UpdateTitle();
 
         Dispatcher.BeginInvoke(() =>
         {
@@ -214,6 +323,16 @@ public partial class MainWindow
 
     private void CloseTab(TabSession tab)
     {
+        if (_spareTabs.Contains(tab))
+        {
+            ContentGrid.Children.Remove(tab.ChatPanel);
+            ContentGrid.Children.Remove(tab.TerminalBorder);
+            tab.Dispose();
+            _spareTabs.Remove(tab);
+            _ = InitSpareTab();
+            return;
+        }
+
         // Guard: ProcessExited fires after Dispose, re-entering CloseTab for an already-removed tab
         if (!_tabs.Contains(tab)) return;
 
@@ -234,6 +353,8 @@ public partial class MainWindow
 
         var idx = _tabs.IndexOf(tab);
         _tabs.Remove(tab);
+        _highlightedTabs.Remove(tab.Id);
+        _workingWhenLeft.Remove(tab.Id);
         TabBar.RemoveTab(tab.Id);
 
         if (_activeTab == tab)
@@ -246,22 +367,31 @@ public partial class MainWindow
         tab.Dispose();
     }
 
-    private void UpdateTitle(char? frame)
+    private string _currentTitle = "Wingman";
+
+    private void UpdateTitle()
     {
         if (_activeTab == null) return;
         var task = _activeTab.TaskDescription?.CurrentTask;
         var tabTitle = _activeTab.IsManuallyNamed ? _activeTab.Title
             : task ?? (_activeTab.Title != "New Tab" ? _activeTab.Title : null);
-        Title = (frame, tabTitle) switch
+
+        // no spinner in Window.Title — SetWindowText triggers DWM recomposition that flashes the terminal
+        var newTitle = tabTitle != null ? $"Wingman - {tabTitle}" : "Wingman";
+        if (newTitle != _currentTitle)
         {
-            ({ } f, { } t) => $"{f} Wingman - {t}",
-            ({ } f, null) => $"{f} Wingman",
-            (null, { } t) => $"Wingman - {t}",
-            _ => "Wingman"
-        };
-        TaskbarItemInfo.ProgressState = frame != null
-                ? System.Windows.Shell.TaskbarItemProgressState.Indeterminate
-                : System.Windows.Shell.TaskbarItemProgressState.None;
+            _currentTitle = newTitle;
+            Title = newTitle;
+        }
+
+        UpdateTaskbar();
+    }
+
+    private void UpdateTaskbar()
+    {
+        TaskbarItemInfo.ProgressState = _tabs.Any(t => t.Spinner?.CurrentFrame != null)
+            ? System.Windows.Shell.TaskbarItemProgressState.Indeterminate
+            : System.Windows.Shell.TaskbarItemProgressState.None;
     }
 
     private async Task<string?> OnApiKeySubmitted(string key)
@@ -289,8 +419,14 @@ public partial class MainWindow
     internal async Task ActivateAi(string apiKey)
     {
         _startupError = null;
+        DisposeSpares();
         foreach (var tab in _tabs)
             await ActivateAi(apiKey, tab);
+        if (_firstTabReady)
+        {
+            _ = InitSpareTab();
+            _ = InitSpareTab();
+        }
     }
 
     private async Task ActivateAi(string apiKey, TabSession tab)
@@ -305,7 +441,7 @@ public partial class MainWindow
 
         var events = new AgentEvents();
         tab.Events = events;
-        var approvalUi = new ApprovalUI(tab.ChatPanel);
+        var approvalUi = new ApprovalUI(tab.ChatPanel, events);
         var lazyApproval = new Lazy<IApprovalUI>(() => approvalUi);
         var lazyPanel = new Lazy<ChatPanel>(() => tab.ChatPanel);
 
@@ -332,8 +468,35 @@ public partial class MainWindow
         tab.TaskDescription.Start(guardClient, chatService, tab.ScreenBuffer);
 
         events.ThinkingStarted += () => Dispatcher.BeginInvoke(() => tab.Spinner!.StartThinking());
-        events.ThinkingStopped += () => Dispatcher.BeginInvoke(() => tab.Spinner!.Stop());
+        events.ThinkingStopped += () => Dispatcher.BeginInvoke(() =>
+        {
+            tab.Spinner!.Stop();
+            if (tab != _activeTab && _workingWhenLeft.Contains(tab.Id))
+            {
+                TabBar.HighlightTab(tab.Id);
+                _highlightedTabs.Add(tab.Id);
+                _workingWhenLeft.Remove(tab.Id);
+            }
+            if (!IsActive)
+                _native.FlashWindow(this);
+        });
         events.CommandStarting += () => Dispatcher.BeginInvoke(() => tab.Spinner!.StartCommand());
+        events.CardWaitStarted += () => Dispatcher.BeginInvoke(() =>
+        {
+            tab.Spinner!.Stop();
+            if (tab != _activeTab && _workingWhenLeft.Contains(tab.Id))
+            {
+                TabBar.HighlightTab(tab.Id);
+                _highlightedTabs.Add(tab.Id);
+                _workingWhenLeft.Remove(tab.Id);
+            }
+            if (!IsActive)
+                _native.FlashWindow(this);
+        });
+        events.CardWaitEnded += () => Dispatcher.BeginInvoke(() =>
+        {
+            if (tab.ChatPanel.IsStreaming) tab.Spinner!.StartThinking();
+        });
 
         tab.Terminal.CommandCompleted += () => Dispatcher.BeginInvoke(() =>
         {
@@ -353,7 +516,7 @@ public partial class MainWindow
                 {
                     TabBar.UpdateTitle(tab.Id, task);
                     if (tab == _activeTab)
-                        UpdateTitle(tab.Spinner?.CurrentFrame);
+                        UpdateTitle();
                 });
             }
         };

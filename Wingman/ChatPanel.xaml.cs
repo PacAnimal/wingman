@@ -512,7 +512,7 @@ public partial class ChatPanel
         _ = SendMessage();
     }
 
-    private Control? FindBubbleControl(DependencyObject obj)
+    private Control? FindBubbleControl(DependencyObject? obj)
     {
         while (obj != null)
         {

@@ -11,9 +11,12 @@ public partial class TabBar : UserControl
 {
     private static readonly SolidColorBrush ActiveBg = new(Color.FromRgb(0x1E, 0x1E, 0x1E));
     private static readonly SolidColorBrush InactiveBg = new(Color.FromRgb(0x2D, 0x2D, 0x2D));
+    private static readonly SolidColorBrush HighlightBg = new(Color.FromRgb(0x26, 0x4F, 0x78));
     private static readonly SolidColorBrush AccentBorder = new(Color.FromRgb(0x0E, 0x63, 0x9C));
     private static readonly SolidColorBrush TextColor = new(Color.FromRgb(0xCC, 0xCC, 0xCC));
     private static readonly SolidColorBrush DimTextColor = new(Color.FromRgb(0x99, 0x99, 0x99));
+
+    private readonly HashSet<Guid> _highlightedTabs = [];
 
     public event Action<Guid>? TabSelected;
     public event Action<Guid>? TabCloseRequested;
@@ -142,7 +145,7 @@ public partial class TabBar : UserControl
         tabItem.MouseLeave += (_, _) =>
         {
             if (_activeTabId != id)
-                tabItem.Background = Brushes.Transparent;
+                tabItem.Background = _highlightedTabs.Contains(id) ? HighlightBg : Brushes.Transparent;
         };
 
         closeBtn.Click += (_, e) =>
@@ -180,7 +183,7 @@ public partial class TabBar : UserControl
     {
         if (_activeTabId.HasValue && _tabs.TryGetValue(_activeTabId.Value, out var oldData))
         {
-            oldData.Item.Background = Brushes.Transparent;
+            oldData.Item.Background = _highlightedTabs.Contains(_activeTabId.Value) ? HighlightBg : Brushes.Transparent;
         }
 
         _activeTabId = id;
@@ -191,10 +194,25 @@ public partial class TabBar : UserControl
         }
     }
 
-    public void UpdateTitle(Guid id, string title)
+    public void HighlightTab(Guid id)
+    {
+        if (_activeTabId == id) return;
+        _highlightedTabs.Add(id);
+        if (_tabs.TryGetValue(id, out var data))
+            data.Item.Background = HighlightBg;
+    }
+
+    public void ClearHighlight(Guid id)
+    {
+        _highlightedTabs.Remove(id);
+        if (_tabs.TryGetValue(id, out var data) && _activeTabId != id)
+            data.Item.Background = Brushes.Transparent;
+    }
+
+    public void UpdateTitle(Guid id, string title, char? spinner = null)
     {
         if (_tabs.TryGetValue(id, out var data))
-            data.TitleText.Text = title;
+            data.TitleText.Text = spinner != null ? $"{spinner} {title}" : title;
     }
 
     private void OnNewTabClick(object sender, RoutedEventArgs e)
