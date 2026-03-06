@@ -51,6 +51,7 @@ internal sealed class TabSession : IDisposable
             BorderBrush = Brushes.Transparent,
             Child = TerminalControl,
         };
+        System.Windows.Automation.AutomationProperties.SetAutomationId(TerminalBorder, "TerminalBorder");
         Grid.SetColumn(TerminalBorder, 2);
     }
 

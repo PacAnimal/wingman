@@ -4,6 +4,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Wingman", "Wingman\Wingman.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Wingman.Tests", "Wingman.Tests\Wingman.Tests.csproj", "{08BDD326-E674-45B5-98BB-D835BA52998B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Wingman.UITests", "Wingman.UITests\Wingman.UITests.csproj", "{52338B4E-8854-4948-93FC-775371357EFD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -38,6 +40,18 @@ Global
 		{08BDD326-E674-45B5-98BB-D835BA52998B}.Release|x64.Build.0 = Release|Any CPU
 		{08BDD326-E674-45B5-98BB-D835BA52998B}.Release|x86.ActiveCfg = Release|Any CPU
 		{08BDD326-E674-45B5-98BB-D835BA52998B}.Release|x86.Build.0 = Release|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Debug|x64.Build.0 = Debug|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Debug|x86.Build.0 = Debug|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Release|x64.ActiveCfg = Release|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Release|x64.Build.0 = Release|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Release|x86.ActiveCfg = Release|Any CPU
+		{52338B4E-8854-4948-93FC-775371357EFD}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

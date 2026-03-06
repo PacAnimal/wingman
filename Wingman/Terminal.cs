@@ -203,52 +203,59 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
 
             _ = Task.Run(async () =>
             {
-                if (_generation != gen) return;
-                await _termStarted.Task;
+                try
+                {
+                    if (_generation != gen) { initComplete.TrySetCanceled(); return; }
+                    await _termStarted.Task;
 
-                var scratchDir = Path.Combine(Path.GetTempPath(), "Wingman", Guid.NewGuid().ToString());
-                Directory.CreateDirectory(scratchDir);
-                _scratchDir = scratchDir;
+                    var scratchDir = Path.Combine(Path.GetTempPath(), "Wingman", Guid.NewGuid().ToString());
+                    Directory.CreateDirectory(scratchDir);
+                    _scratchDir = scratchDir;
 
-                var sentinelLeft = FormattedSentinel[..(FormattedSentinel.Length / 2)];
-                var sentinelRight = FormattedSentinel[(FormattedSentinel.Length / 2)..];
-                WriteCommand($$"""
-                               $WINGMAN_SENTINEL_LEFT = "{{sentinelLeft}}"
-                               $WINGMAN_SENTINEL_RIGHT = "{{sentinelRight}}"
-                               $env:WMTMP = "{{scratchDir}}"
-                               New-Variable -Name WMTMP -Value "{{scratchDir}}" -Option Constant -Scope Global
-                               Set-PSReadLineOption -HistorySaveStyle SaveNothing
-                               function prompt {
-                                   $wm_ok = $?
-                                   $wm_code = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
-                                   $wm_cwd = $PWD.Path
-                                   $wm_cmd = if ($h = Get-History -Count 1) { $h.CommandLine } else { '' }
-                                   $wm_cmd = ($wm_cmd -replace '[\r\n]+', ' ')
-                                   $wm_s = "${WINGMAN_SENTINEL_LEFT}${WINGMAN_SENTINEL_RIGHT}"
-                                   $wm_exit = "${wm_code}|${wm_ok}"
-                                   function wm_hide($t) { Write-Host "`e[30m${t}`e[0m`r$(' ' * $t.Length)`r" -NoNewline }
-                                   wm_hide $wm_s
-                                   wm_hide $wm_exit
-                                   wm_hide $wm_s
-                                   wm_hide $wm_cwd
-                                   wm_hide $wm_s
-                                   wm_hide $wm_cmd
-                                   wm_hide $wm_s
-                                   "PS $($executionContext.SessionState.Path.CurrentLocation)> "
-                               }
-                               [Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory()
-                               """);
+                    var sentinelLeft = FormattedSentinel[..(FormattedSentinel.Length / 2)];
+                    var sentinelRight = FormattedSentinel[(FormattedSentinel.Length / 2)..];
+                    WriteCommand($$"""
+                                   $WINGMAN_SENTINEL_LEFT = "{{sentinelLeft}}"
+                                   $WINGMAN_SENTINEL_RIGHT = "{{sentinelRight}}"
+                                   $env:WMTMP = "{{scratchDir}}"
+                                   New-Variable -Name WMTMP -Value "{{scratchDir}}" -Option Constant -Scope Global
+                                   Set-PSReadLineOption -HistorySaveStyle SaveNothing
+                                   function prompt {
+                                       $wm_ok = $?
+                                       $wm_code = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+                                       $wm_cwd = $PWD.Path
+                                       $wm_cmd = if ($h = Get-History -Count 1) { $h.CommandLine } else { '' }
+                                       $wm_cmd = ($wm_cmd -replace '[\r\n]+', ' ')
+                                       $wm_s = "${WINGMAN_SENTINEL_LEFT}${WINGMAN_SENTINEL_RIGHT}"
+                                       $wm_exit = "${wm_code}|${wm_ok}"
+                                       function wm_hide($t) { Write-Host "`e[30m${t}`e[0m`r$(' ' * $t.Length)`r" -NoNewline }
+                                       wm_hide $wm_s
+                                       wm_hide $wm_exit
+                                       wm_hide $wm_s
+                                       wm_hide $wm_cwd
+                                       wm_hide $wm_s
+                                       wm_hide $wm_cmd
+                                       wm_hide $wm_s
+                                       "PS $($executionContext.SessionState.Path.CurrentLocation)> "
+                                   }
+                                   [Microsoft.PowerShell.PSConsoleReadLine]::ClearHistory()
+                                   """);
 
-                // drain init sentinels - prompt fires twice during init, 4 sentinels each
-                await WaitForSentinel(8);
+                    // drain init sentinels - prompt fires twice during init, 4 sentinels each
+                    await WaitForSentinel(8);
 
-                if (_generation != gen) return;
-                // skip init output — user commands start from here
-                using (var buf = await _outputBuffer.WaitForDisposable())
-                    _userCommandOffset = buf.Value.Length;
+                    if (_generation != gen) { initComplete.TrySetCanceled(); return; }
+                    // skip init output — user commands start from here
+                    using (var buf = await _outputBuffer.WaitForDisposable())
+                        _userCommandOffset = buf.Value.Length;
 
-                _resetCts = new CancellationTokenSource();
-                initComplete.TrySetResult();
+                    _resetCts = new CancellationTokenSource();
+                    initComplete.TrySetResult();
+                }
+                catch (Exception ex)
+                {
+                    initComplete.TrySetException(ex);
+                }
             });
         };
 

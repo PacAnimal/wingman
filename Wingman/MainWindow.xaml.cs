@@ -141,23 +141,34 @@ public partial class MainWindow
         ContentGrid.Children.Add(tab.ChatPanel);
         ContentGrid.Children.Add(tab.TerminalBorder);
 
-        var cols = _activeTab?.TerminalControl.Terminal?.Columns ?? 80;
-        var rows = _activeTab?.TerminalControl.Terminal?.Rows ?? 24;
-        await tab.Terminal.Init(tab.TerminalControl, cols, rows);
-        if (_terminalTheme != null)
-            tab.TerminalControl.Theme = _terminalTheme;
-        if (!tab.TerminalControl.IsKeyboardFocusWithin)
-            tab.TerminalControl.IsCursorVisible = false;
+        try
+        {
+            var cols = _activeTab?.TerminalControl.Terminal?.Columns ?? 80;
+            var rows = _activeTab?.TerminalControl.Terminal?.Rows ?? 24;
+            await tab.Terminal.Init(tab.TerminalControl, cols, rows);
+            if (_terminalTheme != null)
+                tab.TerminalControl.Theme = _terminalTheme;
+            if (!tab.TerminalControl.IsKeyboardFocusWithin)
+                tab.TerminalControl.IsCursorVisible = false;
 
-        var stored = await _settings.LoadAsync();
-        var apiKey = stored.EffectiveApiKey;
-        if (!string.IsNullOrEmpty(apiKey))
-            await ActivateAi(apiKey, tab);
+            var stored = await _settings.LoadAsync();
+            var apiKey = stored.EffectiveApiKey;
+            if (!string.IsNullOrEmpty(apiKey))
+                await ActivateAi(apiKey, tab);
 
-        SwitchToTab(tab);
-        // clear+welcome runs here (not during init) so the renderer is already correctly sized
-        _ = tab.Terminal.RunCommand("clear; Write-Host \"`nWingman ready!`n\" -ForegroundColor Green");
-        _ = InitSpareTab();
+            SwitchToTab(tab);
+            // clear+welcome runs here (not during init) so the renderer is already correctly sized
+            _ = tab.Terminal.RunCommand("clear; Write-Host \"`nWingman ready!`n\" -ForegroundColor Green");
+            _ = InitSpareTab();
+        }
+        catch
+        {
+            _tabs.Remove(tab);
+            TabBar.RemoveTab(tab.Id);
+            ContentGrid.Children.Remove(tab.ChatPanel);
+            ContentGrid.Children.Remove(tab.TerminalBorder);
+            tab.Dispose();
+        }
     }
 
     private async Task InitSpareTab()
