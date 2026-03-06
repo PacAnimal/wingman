@@ -57,7 +57,6 @@ sealed class TaskDescriptionService : IDisposable
         try
         {
             await _firstCommandTcs.Task.WaitAsync(ct);
-            await Task.Delay(TimeSpan.FromSeconds(Constants.TaskFirstCommandDelaySeconds), ct);
             await GenerateAsync();
         }
         catch (OperationCanceledException)

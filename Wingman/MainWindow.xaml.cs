@@ -477,6 +477,8 @@ public partial class MainWindow
         tab.TaskDescription?.Dispose();
         tab.TaskDescription = new TaskDescriptionService();
         tab.TaskDescription.Start(guardClient, chatService, tab.ScreenBuffer);
+        tab.Terminal.UserCommandDetected += () => tab.TaskDescription?.SignalFirstCommand();
+        tab.ChatPanel.MessageSent += () => tab.TaskDescription?.SignalFirstCommand();
 
         events.ThinkingStarted += () => Dispatcher.BeginInvoke(() => tab.Spinner!.StartThinking());
         events.ThinkingStopped += () => Dispatcher.BeginInvoke(() =>
@@ -515,7 +517,6 @@ public partial class MainWindow
                 tab.Spinner?.StartThinking();
             else
                 tab.Spinner?.Stop();
-            tab.TaskDescription?.SignalFirstCommand();
         });
 
         tab.TaskDescription.TaskChanged += task =>

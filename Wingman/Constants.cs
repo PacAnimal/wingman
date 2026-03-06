@@ -11,7 +11,6 @@ internal static class Constants
     internal const int SpinnerThinkingMinSpeedSwitchIntervalMs = 250;
     internal const int SpinnerThinkingMaxSpeedSwitchIntervalMs = 1500;
     internal const int TaskTypingIntervalMinutes = 5;
-    internal const int TaskFirstCommandDelaySeconds = 5;
 
     internal const int MaxMemories = 100;
 

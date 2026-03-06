@@ -28,6 +28,7 @@ public interface ITerminal
     string ScratchDir { get; }
     event Action? ProcessExited;
     event Action? CommandCompleted;
+    event Action? UserCommandDetected;
     List<UserCommandInfo> DrainUserCommands();
 }
 
@@ -45,6 +46,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
     private int _generation;
     private CancellationTokenSource? _resetCts;
     private volatile bool _commandRunning;
+    private volatile bool _initDone;
     private int _userCommandOffset;
     private string _lastHistoryCommand = "";
     private readonly ConcurrentQueue<UserCommandInfo> _pendingUserCommands = new();
@@ -57,6 +59,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
 
     public event Action? ProcessExited;
     public event Action? CommandCompleted;
+    public event Action? UserCommandDetected;
 
     public void Dispose()
     {
@@ -150,6 +153,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
 
     private async Task InitCore(TermPTY conPty, int cols, int rows)
     {
+        _initDone = false;
         var gen = _generation;
 
         var hwndReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -175,6 +179,8 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
             while ((pos = stripped.IndexOf(FormattedSentinel, pos, StringComparison.Ordinal)) >= 0)
             {
                 _sentinels.Writer.TryWrite(true);
+                if (_initDone && !_commandRunning)
+                    UserCommandDetected?.Invoke();
                 pos += FormattedSentinel.Length;
             }
         };
@@ -265,6 +271,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
 
         // let commands run
         _commandLock.Release();
+        _initDone = true;
     }
 
     public async Task<CommandResult> RunCommand(string command)
@@ -395,6 +402,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
                 var trimmedOutput = output.Trim();
                 if (trimmedOutput.Length > MaxOutputLength) trimmedOutput = trimmedOutput[..MaxOutputLength];
                 _pendingUserCommands.Enqueue(new UserCommandInfo(command, trimmedOutput, exitCode, success, cwd));
+                UserCommandDetected?.Invoke();
             }
         }
 

@@ -201,6 +201,7 @@ public partial class ChatPanel
     public bool IsStreaming => _isStreaming;
 
     public event Action? UserTyping;
+    public event Action? MessageSent;
     public event Action<bool>? CardActiveChanged;
     public bool HasActiveCard => _activeCard != null;
     public void FocusActiveCard() => _activeCard?.Focus();
@@ -563,6 +564,7 @@ public partial class ChatPanel
 
         if (_isStreaming || _chatService == null) return;
 
+        MessageSent?.Invoke();
         InputBox.Text = "";
         _isStreaming = true;
         _agentEvents?.RaiseThinkingStarted();
