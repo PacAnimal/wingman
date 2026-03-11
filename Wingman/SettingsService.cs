@@ -41,7 +41,7 @@ public class SettingsService : ISettingsService
             var kind = AiProvider.Detect(key).Kind;
             switch (kind)
             {
-                case AiProviderKind.OpenAI: s.OpenAiApiKey = key; break;
+                case AiProviderKind.OpenAi: s.OpenAiApiKey = key; break;
                 case AiProviderKind.Anthropic: s.AnthropicApiKey = key; break;
             }
             s.Provider = kind;

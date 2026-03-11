@@ -1,5 +1,3 @@
-using Wingman;
-
 namespace Wingman.Tests;
 
 [TestFixture]
@@ -79,7 +77,7 @@ public class ScreenBufferTests
         public void Feed_ControlCharsBelow0x20_Ignored()
         {
             var sb = Make();
-            sb.Feed("\x01\x02\x03hello\x04\x05");
+            sb.Feed("\x01\x02\x03" + "hello" + "\x04\x05");
             Assert.That(sb.GetVisibleText(), Is.EqualTo("hello"));
         }
     }

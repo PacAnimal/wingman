@@ -160,7 +160,7 @@ internal static class MarkdownRenderer
                 return lb.IsHard ? new LineBreak() : new Run(" ");
 
             case CodeInline code:
-                return new Run(code.Content.ToString()) { FontFamily = MonoFont, Foreground = InlineCodeFg, FontSize = 12 };
+                return new Run(code.Content) { FontFamily = MonoFont, Foreground = InlineCodeFg, FontSize = 12 };
 
             case EmphasisInline emphasis:
                 {

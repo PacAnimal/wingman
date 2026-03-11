@@ -12,12 +12,12 @@ public class WingmanSettings
 
     public string? KeyForProvider(AiProviderKind kind) => kind switch
     {
-        AiProviderKind.OpenAI => OpenAiApiKey
-            ?? (ApiKey != null && (Provider ?? AiProviderKind.OpenAI) == AiProviderKind.OpenAI ? ApiKey : null),
+        AiProviderKind.OpenAi => OpenAiApiKey
+            ?? (ApiKey != null && (Provider ?? AiProviderKind.OpenAi) == AiProviderKind.OpenAi ? ApiKey : null),
         AiProviderKind.Anthropic => AnthropicApiKey
             ?? (ApiKey != null && Provider == AiProviderKind.Anthropic ? ApiKey : null),
         _ => null
     };
 
-    public string? EffectiveApiKey => KeyForProvider(Provider ?? AiProviderKind.OpenAI);
+    public string? EffectiveApiKey => KeyForProvider(Provider ?? AiProviderKind.OpenAi);
 }

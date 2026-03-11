@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Windows;
-using System.Windows.Threading;
 using Cathedral.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -8,7 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Wingman;
 
-public partial class App : Application
+public partial class App
 {
     private IHost? _host;
 
@@ -39,7 +38,7 @@ public partial class App : Application
         // load settings and determine startup state before building the host
         var settings = new SettingsService();
         string? startupError;
-        string? apiKey = null;
+        string? apiKey;
         AiProviderKind? initialProvider = null;
 
         try

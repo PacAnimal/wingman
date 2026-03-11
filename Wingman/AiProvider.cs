@@ -4,7 +4,7 @@ using OpenAI;
 
 namespace Wingman;
 
-public enum AiProviderKind { OpenAI, Anthropic }
+public enum AiProviderKind { OpenAi, Anthropic }
 
 public sealed class AiProvider
 {
@@ -24,11 +24,11 @@ public sealed class AiProvider
     public static AiProvider Detect(string apiKey) =>
         apiKey.StartsWith("sk-ant-", StringComparison.Ordinal)
             ? new AiProvider(AiProviderKind.Anthropic, "claude-sonnet-4-6", "claude-haiku-4-5-20251001", supportsWebSearch: false)
-            : new AiProvider(AiProviderKind.OpenAI, "gpt-5.2", "gpt-5-mini", supportsWebSearch: true);
+            : new AiProvider(AiProviderKind.OpenAi, "gpt-5.2", "gpt-5-mini", supportsWebSearch: true);
 
     public IChatClient CreateChatClient(string apiKey) => Kind switch
     {
-        AiProviderKind.OpenAI => new OpenAIClient(apiKey)
+        AiProviderKind.OpenAi => new OpenAIClient(apiKey)
             .GetResponsesClient(ChatModel)
             .AsIChatClient()
             .AsBuilder()
@@ -44,7 +44,7 @@ public sealed class AiProvider
 
     public IChatClient CreateGuardClient(string apiKey) => Kind switch
     {
-        AiProviderKind.OpenAI => new OpenAIClient(apiKey)
+        AiProviderKind.OpenAi => new OpenAIClient(apiKey)
             .GetResponsesClient(GuardModel)
             .AsIChatClient(),
         AiProviderKind.Anthropic => new AnthropicClient { ApiKey = apiKey }

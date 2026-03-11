@@ -4,12 +4,12 @@ using System.Windows.Media;
 
 namespace Wingman;
 
-public interface IApprovalUI
+public interface IApprovalUi
 {
     Task<bool> RequestApprovalAsync(string command, string purpose, string reason);
 }
 
-public class ApprovalUI(ChatPanel chatPanel, AgentEvents events) : IApprovalUI
+public class ApprovalUi(ChatPanel chatPanel, AgentEvents events) : IApprovalUi
 {
     public async Task<bool> RequestApprovalAsync(string command, string purpose, string reason)
     {

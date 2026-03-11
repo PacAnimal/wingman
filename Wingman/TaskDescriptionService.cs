@@ -76,7 +76,7 @@ sealed class TaskDescriptionService : IDisposable
                 .TakeLast(10)
                 .Select(m =>
                 {
-                    var text = m.Text ?? string.Empty;
+                    var text = m.Text;
                     return $"{m.Role}: {(text.Length > 500 ? text[..500] : text)}";
                 });
 
@@ -94,7 +94,7 @@ sealed class TaskDescriptionService : IDisposable
 
             var messages = new List<ChatMessage> { new(ChatRole.User, sb.ToString()) };
             var response = await _client.GetResponseAsync(messages);
-            var task = response.Text?.Trim().ToLowerInvariant();
+            var task = response.Text.Trim().ToLowerInvariant();
             if (!string.IsNullOrWhiteSpace(task))
             {
                 CurrentTask = task;

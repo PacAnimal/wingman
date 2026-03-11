@@ -113,11 +113,17 @@ internal sealed class WingmanApp : IDisposable
         return false;
     }
 
+    // ReSharper disable once UnusedMember.Global
     public static void SendKeys(string keys) => FlaUI.Core.Input.Keyboard.Type(keys);
 
     public void Dispose()
     {
-        try { _app.Close(); } catch { }
+        try { _app.Close(); }
+        catch
+        {
+            // ignored
+        }
+
         _automation.Dispose();
     }
 }

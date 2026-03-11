@@ -97,7 +97,7 @@
         </Grid>
 
         <!-- slash command completion popup -->
-        <Popup x:Name="CompletionPopup"
+        <Popup Grid.Row="0" x:Name="CompletionPopup"
                PlacementTarget="{Binding ElementName=InputBox}"
                Placement="Top" StaysOpen="True" AllowsTransparency="True">
             <Border Background="#2D2D2D" CornerRadius="4" Padding="2"

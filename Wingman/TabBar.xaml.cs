@@ -7,7 +7,7 @@ using System.Windows.Shell;
 
 namespace Wingman;
 
-public partial class TabBar : UserControl
+public partial class TabBar
 {
     private static readonly SolidColorBrush ActiveBg = new(Color.FromRgb(0x1E, 0x1E, 0x1E));
     private static readonly SolidColorBrush InactiveBg = new(Color.FromRgb(0x2D, 0x2D, 0x2D));
@@ -321,5 +321,6 @@ public partial class TabBar : UserControl
         MaximizeButton.ToolTip = isMaximized ? "Restore Down" : "Maximize";
     }
 
+    // ReSharper disable once NotAccessedPositionalProperty.Local
     private sealed record TabItemData(Guid Id, Border Item, TextBlock TitleText, Button CloseButton, TextBox RenameBox);
 }

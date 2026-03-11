@@ -3,9 +3,9 @@ using Microsoft.Extensions.AI;
 
 namespace Wingman;
 
-public class EditFileTool(ITerminal terminal, Lazy<IApprovalUI> approvalUi, AgentEvents events) : IAgentTool
+public class EditFileTool(ITerminal terminal, Lazy<IApprovalUi> approvalUi, AgentEvents events) : IAgentTool
 {
-    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+    public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (string path, int line, int replaceLines, string[] replaceWith) => EditFileAsync(path, line, replaceLines, replaceWith),
         "edit_file",
         "Edits a text file at a specific line. " +

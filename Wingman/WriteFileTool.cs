@@ -3,9 +3,9 @@ using Microsoft.Extensions.AI;
 
 namespace Wingman;
 
-public class WriteFileTool(ITerminal terminal, Lazy<IApprovalUI> approvalUi, AgentEvents events) : IAgentTool
+public class WriteFileTool(ITerminal terminal, Lazy<IApprovalUi> approvalUi, AgentEvents events) : IAgentTool
 {
-    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+    public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (string path, string content) => WriteFileAsync(path, content),
         "write_file",
         "Writes text content to a file. Use for config files, notes, or structured text output — NOT for scripts. " +

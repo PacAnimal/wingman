@@ -131,7 +131,7 @@ public partial class WindowsNative : IWindowsNative
         // check current provider
         if (currentProvider != null)
         {
-            var id = currentProvider == AiProviderKind.OpenAI
+            var id = currentProvider == AiProviderKind.OpenAi
                 ? WM_SYSCOMMAND_PROVIDER_OPENAI
                 : WM_SYSCOMMAND_PROVIDER_ANTHROPIC;
             _ = CheckMenuItem(sub, id, MF_BYCOMMAND | MF_CHECKED);
@@ -153,7 +153,7 @@ public partial class WindowsNative : IWindowsNative
         var menu = GetSystemMenu(hwnd, false);
         // find the submenu by scanning — the submenu items are at fixed command IDs
         _ = CheckMenuItem(menu, WM_SYSCOMMAND_PROVIDER_OPENAI,
-            MF_BYCOMMAND | (provider == AiProviderKind.OpenAI ? MF_CHECKED : MF_UNCHECKED));
+            MF_BYCOMMAND | (provider == AiProviderKind.OpenAi ? MF_CHECKED : MF_UNCHECKED));
         _ = CheckMenuItem(menu, WM_SYSCOMMAND_PROVIDER_ANTHROPIC,
             MF_BYCOMMAND | (provider == AiProviderKind.Anthropic ? MF_CHECKED : MF_UNCHECKED));
     }
@@ -181,7 +181,7 @@ public partial class WindowsNative : IWindowsNative
         }
         else if (cmd == WM_SYSCOMMAND_PROVIDER_OPENAI)
         {
-            onProviderSelected(AiProviderKind.OpenAI);
+            onProviderSelected(AiProviderKind.OpenAi);
             handled = true;
         }
         else if (cmd == WM_SYSCOMMAND_PROVIDER_ANTHROPIC)
@@ -226,7 +226,7 @@ public partial class WindowsNative : IWindowsNative
             var selected = _getTerminalSelection!();
             if (string.IsNullOrEmpty(selected)) return;
             try { Clipboard.SetText(selected); }
-            catch (System.Runtime.InteropServices.COMException) { /* clipboard locked by another app */ }
+            catch (COMException) { /* clipboard locked by another app */ }
             handled = true; // suppress ^C — don't let it reach the terminal
             return;
         }

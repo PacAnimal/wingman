@@ -4,7 +4,7 @@ namespace Wingman;
 
 public class SaveMemoryTool(IMemoryService memoryService, AgentEvents events) : IAgentTool
 {
-    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+    public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (string memory) => SaveAsync(memory),
         "save_memory",
         "Saves a fact to persistent memory so it's available in future sessions. Use for discovered environment facts like tool versions, installed modules, user preferences, and common paths. Do not save conversation-specific context.");
@@ -18,7 +18,7 @@ public class SaveMemoryTool(IMemoryService memoryService, AgentEvents events) : 
 
 public class DeleteMemoryTool(IMemoryService memoryService, AgentEvents events) : IAgentTool
 {
-    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+    public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (int index) => DeleteAsync(index),
         "delete_memory",
         "Deletes a memory by its 1-based index number. Use list_memory first to find the index.");
@@ -32,7 +32,7 @@ public class DeleteMemoryTool(IMemoryService memoryService, AgentEvents events) 
 
 public class UpdateMemoryTool(IMemoryService memoryService, AgentEvents events) : IAgentTool
 {
-    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+    public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (int index, string memory) => UpdateAsync(index, memory),
         "update_memory",
         "Replaces an existing memory at the given 1-based index with new text. Use when a saved fact is outdated or inaccurate.");
@@ -46,7 +46,7 @@ public class UpdateMemoryTool(IMemoryService memoryService, AgentEvents events) 
 
 public class ListMemoryTool(IMemoryService memoryService, AgentEvents events) : IAgentTool
 {
-    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+    public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         () => ListAsync(),
         "list_memory",
         "Returns all saved memories as a numbered list. Check this before running environment discovery commands.");

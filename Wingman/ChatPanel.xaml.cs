@@ -97,6 +97,7 @@ public partial class ChatPanel
         IsKeyboardFocusWithinChanged += (_, e) =>
         {
             if ((bool)e.NewValue) return;
+            // ReSharper disable once RedundantJumpStatement
             if (_activeCard != null) return; // card survives focus loss; re-focused on mouse up
         };
 

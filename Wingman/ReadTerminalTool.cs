@@ -4,7 +4,7 @@ namespace Wingman;
 
 public class ReadTerminalTool(IScreenBuffer screenBuffer, AgentEvents events) : IAgentTool
 {
-    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+    public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         () => ReadTerminal(),
         "read_terminal",
         "Returns the text currently visible in the terminal viewport. " +

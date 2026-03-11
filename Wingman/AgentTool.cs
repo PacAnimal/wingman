@@ -4,12 +4,12 @@ namespace Wingman;
 
 public interface IAgentTool
 {
-    AIFunction AsAIFunction();
+    AIFunction AsAiFunction();
 }
 
-public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IApprovalUI> approvalUi, AgentEvents events) : IAgentTool
+public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IApprovalUi> approvalUi, AgentEvents events) : IAgentTool
 {
-    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+    public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (string command, string purpose) => ExecuteWithGuard(command, purpose),
         "run_command",
         "Executes a PowerShell command in the terminal and returns a structured result with output, exit code, success status, and working directory. Always provide a clear, concise purpose describing why the command is needed.");

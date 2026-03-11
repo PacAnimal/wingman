@@ -7,7 +7,7 @@ namespace Wingman;
 
 public class AskUserTool(Lazy<ChatPanel> chatPanel, AgentEvents events) : IAgentTool
 {
-    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+    public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (string question, string[] options) => AskAsync(question, options),
         "ask_user",
         "Presents a numbered multiple-choice question to the user and waits for a single keypress to select an option. " +

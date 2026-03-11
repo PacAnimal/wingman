@@ -412,8 +412,8 @@ public partial class MainWindow
             var detected = AiProvider.Detect(key).Kind;
             if (detected != expected)
             {
-                var expectedLabel = expected == AiProviderKind.OpenAI ? "OpenAI" : "Anthropic";
-                var detectedLabel = detected == AiProviderKind.OpenAI ? "OpenAI" : "Anthropic";
+                var expectedLabel = expected == AiProviderKind.OpenAi ? "OpenAI" : "Anthropic";
+                var detectedLabel = detected == AiProviderKind.OpenAi ? "OpenAI" : "Anthropic";
                 return $"That key looks like {detectedLabel}, not {expectedLabel}.";
             }
         }
@@ -452,8 +452,8 @@ public partial class MainWindow
 
         var events = new AgentEvents();
         tab.Events = events;
-        var approvalUi = new ApprovalUI(tab.ChatPanel, events);
-        var lazyApproval = new Lazy<IApprovalUI>(() => approvalUi);
+        var approvalUi = new ApprovalUi(tab.ChatPanel, events);
+        var lazyApproval = new Lazy<IApprovalUi>(() => approvalUi);
         var lazyPanel = new Lazy<ChatPanel>(() => tab.ChatPanel);
 
         IAgentTool[] tools =
@@ -578,7 +578,7 @@ public partial class MainWindow
     private async void OnProviderSelected(AiProviderKind kind)
     {
         var stored = await _settings.LoadAsync();
-        if (kind == (stored.Provider ?? AiProviderKind.OpenAI)) return;
+        if (kind == (stored.Provider ?? AiProviderKind.OpenAi)) return;
 
         var key = stored.KeyForProvider(kind);
         if (!string.IsNullOrEmpty(key))
@@ -589,7 +589,7 @@ public partial class MainWindow
         }
         else
         {
-            var label = kind == AiProviderKind.OpenAI ? "OpenAI" : "Anthropic";
+            var label = kind == AiProviderKind.OpenAi ? "OpenAI" : "Anthropic";
             _pendingProviderConstraint = kind;
             _activeTab?.ChatPanel.Initialize(null, null, $"Enter your {label} API key", OnApiKeySubmitted);
         }

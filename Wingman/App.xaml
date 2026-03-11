@@ -1,7 +1,6 @@
 <Application x:Class="Wingman.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:Wingman">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Application.Resources>
 
         <!-- invisible zero-size repeat buttons replace the default arrow buttons -->

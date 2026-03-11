@@ -4,11 +4,11 @@ using Microsoft.Extensions.AI;
 
 namespace Wingman;
 
-public class ReadFileTool(Lazy<IApprovalUI> approvalUi, AgentEvents events) : IAgentTool
+public class ReadFileTool(Lazy<IApprovalUi> approvalUi, AgentEvents events) : IAgentTool
 {
     private const int DefaultLimit = 500;
 
-    public AIFunction AsAIFunction() => AIFunctionFactory.Create(
+    public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (string path, int offset, int limit) => ReadFileAsync(path, offset, limit),
         "read_file",
         "Reads a text file and returns its contents with line numbers. Use offset and limit to page through large files. " +

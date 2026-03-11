@@ -70,7 +70,7 @@ public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : IC
             try
             {
                 var response = await client.GetResponseAsync(messages, options, cts.Token);
-                var text = response.Text ?? "";
+                var text = response.Text;
                 logger.LogDebug("Guard raw response: {Text}", text);
                 var json = ExtractJson(text);
                 using var doc = JsonDocument.Parse(json);

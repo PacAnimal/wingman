@@ -292,7 +292,7 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
 
             // drain stale sentinel signals — already processed as user commands above
             var drained = 0;
-            while (_sentinels.Reader.TryRead(out bool stale)) drained++;
+            while (_sentinels.Reader.TryRead(out var _)) drained++;
             if (drained > 0) log.LogDebug("Drained {Count} stale sentinel(s)", drained);
 
             var sw = Stopwatch.StartNew();

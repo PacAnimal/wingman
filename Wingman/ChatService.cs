@@ -130,7 +130,7 @@ public class ChatService : IChatService
             "and compress verbose memories into concise facts.\n" +
             "- Do NOT save conversation-specific context — only durable environment facts and techniques." +
             (memoryBlock.Length == 0 ? "" : "\n\n" + memoryBlock)));
-        var toolList = tools.Select(t => t.AsAIFunction()).Cast<AITool>().ToList();
+        var toolList = tools.Select(t => t.AsAiFunction()).Cast<AITool>().ToList();
         if (supportsWebSearch) toolList.Add(new HostedWebSearchTool());
         _options = new ChatOptions { Tools = toolList };
     }
@@ -247,7 +247,7 @@ public class ChatService : IChatService
             summarizeOptions,
             linked.Token);
 
-        return response.Text ?? "";
+        return response.Text;
     }
 
     // fallback: keep tail of old commands capped at UserCommandFallbackMaxChars
@@ -329,7 +329,7 @@ public class ChatService : IChatService
             for (var i = 1; i < summarizeEnd; i++)
             {
                 var msg = snapshot[i];
-                var text = msg.Text ?? "";
+                var text = msg.Text;
                 if (text.Length > 2000) text = text[..2000] + "...";
                 sb.AppendLine($"{msg.Role}: {text}");
             }
