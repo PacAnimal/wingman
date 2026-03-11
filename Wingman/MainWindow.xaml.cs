@@ -620,7 +620,8 @@ public partial class MainWindow
             if (handled) { e.Handled = true; return; }
         }
 
-        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        // exclude AltGr (Ctrl+Alt) so Norwegian/international characters like @ aren't swallowed
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && (Keyboard.Modifiers & ModifierKeys.Alt) == 0)
         {
             if (e.Key == Key.Left)
             {
