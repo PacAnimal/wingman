@@ -29,8 +29,8 @@ public sealed class AiProvider
     public IChatClient CreateChatClient(string apiKey) => Kind switch
     {
         AiProviderKind.OpenAi => new OpenAIClient(apiKey)
-            .GetResponsesClient(ChatModel)
-            .AsIChatClient()
+            .GetResponsesClient()
+            .AsIChatClient(ChatModel)
             .AsBuilder()
             .UseFunctionInvocation()
             .Build(),
@@ -45,8 +45,8 @@ public sealed class AiProvider
     public IChatClient CreateGuardClient(string apiKey) => Kind switch
     {
         AiProviderKind.OpenAi => new OpenAIClient(apiKey)
-            .GetResponsesClient(GuardModel)
-            .AsIChatClient(),
+            .GetResponsesClient()
+            .AsIChatClient(GuardModel),
         AiProviderKind.Anthropic => new AnthropicClient { ApiKey = apiKey }
             .AsIChatClient(GuardModel),
         _ => throw new ArgumentOutOfRangeException(nameof(apiKey), $"Unsupported provider kind: {Kind}")
