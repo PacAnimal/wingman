@@ -13,6 +13,7 @@ internal static class Constants
     internal const int TaskTypingIntervalMinutes = 5;
 
     internal const int MaxMemories = 100;
+    internal const int ToolResultMaxCharsInHistory = 4_000;
 
     // when history exceeds this, summarize old messages before sending to the API
     internal const int ContextSummarizeThreshold = 100;

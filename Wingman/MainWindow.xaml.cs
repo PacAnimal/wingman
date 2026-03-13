@@ -471,7 +471,7 @@ public partial class MainWindow
             new ListMemoryTool(memory, events),
         ];
 
-        var chatService = new ChatService(ChatClientFactory, guardClient, events, tools, memoryBlock, tab.Terminal, provider.SupportsWebSearch);
+        var chatService = new ChatService(ChatClientFactory, guardClient, tools, memoryBlock, tab.Terminal, provider.SupportsWebSearch);
         tab.ChatService = chatService;
 
         tab.TaskDescription?.Dispose();

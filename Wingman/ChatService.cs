@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using Cathedral.Utils;
 using Microsoft.Extensions.AI;
 
@@ -34,17 +35,12 @@ public class ChatService : IChatService
         }
     }
 
-    public ChatService(Func<IChatClient> clientFactory, IChatClient guardClient, AgentEvents events, IEnumerable<IAgentTool> tools, string memoryBlock, ITerminal terminal, bool supportsWebSearch = true)
+    public ChatService(Func<IChatClient> clientFactory, IChatClient guardClient, IEnumerable<IAgentTool> tools, string memoryBlock, ITerminal terminal, bool supportsWebSearch = true)
     {
         _clientFactory = clientFactory;
         _guardClient = guardClient;
         _terminal = terminal;
         _client = clientFactory();
-        events.ToolResultLogged += async summary =>
-        {
-            using var h = await _history.WaitForDisposable();
-            h.Value.Add(new ChatMessage(ChatRole.System, summary));
-        };
         using var init = _history.WaitForDisposable().GetAwaiter().GetResult();
         init.Value.Add(new ChatMessage(ChatRole.System,
             "You are Wingman, a PowerShell assistant running inside a live terminal.\n\n" +
@@ -120,11 +116,19 @@ public class ChatService : IChatService
                 : "") +
             "MEMORY:\n" +
             "- You have persistent memory across sessions via save_memory, delete_memory, update_memory, and list_memory tools.\n" +
-            "- AGGRESSIVELY save useful discoveries. If you spent time finding a path, figuring out a command, " +
-            "or discovering how something works — save it immediately so you never have to rediscover it.\n" +
-            "- Save: file paths, directory structures, tool versions, module locations, config paths, " +
-            "working commands, environment quirks, user preferences, project structures.\n" +
+            "- After EVERY tool call that reveals environment facts, immediately save them if not already stored. " +
+            "Do NOT wait to be asked — the whole point of memory is to avoid rediscovering things you already found.\n" +
+            "- Save these categories of facts:\n" +
+            "  - Azure resource groups, subscription IDs, tenant IDs\n" +
+            "  - Cloud infrastructure layout: which resource groups exist, what resources they contain, regions, SKUs\n" +
+            "  - Tool/binary locations and versions (e.g., az path, terraform version)\n" +
+            "  - Server names, IP addresses, DNS entries\n" +
+            "  - User accounts, group memberships, mailbox configs\n" +
+            "  - Directory structures and project layouts\n" +
+            "  - Working connection strings and endpoints\n" +
+            "  - Module/cmdlet availability\n" +
             "- Keep memories short — one concise line per fact.\n" +
+            "- NEVER save passwords, secrets, API keys, or tokens.\n" +
             "- If you discover a saved memory is inaccurate, delete or update it immediately.\n" +
             "- When you have 90+ memories, proactively prune: merge related memories, delete obsolete ones, " +
             "and compress verbose memories into concise facts.\n" +
@@ -157,6 +161,7 @@ public class ChatService : IChatService
         using (var h = await _history.WaitForDisposable(cancellationToken))
             apiHistory = BuildApiHistory(h.Value);
 
+        var preCallCount = apiHistory.Count;
         var responseText = new StringBuilder();
         try
         {
@@ -171,11 +176,15 @@ public class ChatService : IChatService
         }
         finally
         {
-            // save whatever was received, even if cancelled mid-stream
-            if (responseText.Length > 0)
+            // persist tool call/result messages MEAI accumulated, then save final assistant response
+            var toolMessages = ExtractToolMessages(apiHistory, preCallCount).ToList();
+            if (toolMessages.Count > 0 || responseText.Length > 0)
             {
                 using var h = await _history.WaitForDisposable(cancellationToken);
-                h.Value.Add(new ChatMessage(ChatRole.Assistant, responseText.ToString()));
+                foreach (var msg in toolMessages)
+                    h.Value.Add(msg);
+                if (responseText.Length > 0)
+                    h.Value.Add(new ChatMessage(ChatRole.Assistant, responseText.ToString()));
             }
         }
     }
@@ -294,7 +303,7 @@ public class ChatService : IChatService
     private List<ChatMessage> BuildApiHistory(List<ChatMessage> history)
     {
         if (history.Count <= Constants.ContextSummarizeThreshold || _cachedSummary == null)
-            return history;
+            return [.. history];
 
         var recentStart = history.Count - Constants.ContextRecentToKeep;
         var result = new List<ChatMessage>(Constants.ContextRecentToKeep + 2)
@@ -329,7 +338,15 @@ public class ChatService : IChatService
             for (var i = 1; i < summarizeEnd; i++)
             {
                 var msg = snapshot[i];
-                var text = msg.Text;
+                string text;
+                var funcCalls = msg.Contents.OfType<FunctionCallContent>().ToList();
+                var funcResults = msg.Contents.OfType<FunctionResultContent>().ToList();
+                if (funcCalls.Count > 0)
+                    text = "[called " + string.Join(", ", funcCalls.Select(f => f.Name)) + "]";
+                else if (funcResults.Count > 0)
+                    text = "[" + string.Join("; ", funcResults.Select(r => { var rs = ResultToString(r.Result); return rs.Length > 200 ? rs[..200] + "..." : rs; })) + "]";
+                else
+                    text = msg.Text;
                 if (text.Length > 2000) text = text[..2000] + "...";
                 sb.AppendLine($"{msg.Role}: {text}");
             }
@@ -351,5 +368,48 @@ public class ChatService : IChatService
         {
             // summarization failed — continue without updating summary
         }
+    }
+
+    private static IEnumerable<ChatMessage> ExtractToolMessages(List<ChatMessage> apiHistory, int preCallCount)
+    {
+        for (var i = preCallCount; i < apiHistory.Count; i++)
+        {
+            var msg = apiHistory[i];
+            if (msg.Role == ChatRole.Assistant)
+            {
+                // skip pure-text assistant messages — final response saved separately
+                if (msg.Contents.OfType<FunctionCallContent>().Any())
+                    yield return msg;
+            }
+            else if (msg.Role == ChatRole.Tool)
+            {
+                yield return TruncateFunctionResults(msg);
+            }
+        }
+    }
+
+    private static ChatMessage TruncateFunctionResults(ChatMessage msg)
+    {
+        var needsTruncation = msg.Contents.OfType<FunctionResultContent>()
+            .Any(r => ResultToString(r.Result).Length > Constants.ToolResultMaxCharsInHistory);
+        if (!needsTruncation) return msg;
+
+        var newContents = msg.Contents
+            .Select<AIContent, AIContent>(c =>
+            {
+                if (c is not FunctionResultContent frc) return c;
+                var s = ResultToString(frc.Result);
+                if (s.Length <= Constants.ToolResultMaxCharsInHistory) return frc;
+                return new FunctionResultContent(frc.CallId, s[..Constants.ToolResultMaxCharsInHistory]);
+            })
+            .ToList();
+        return new ChatMessage(msg.Role, newContents);
+    }
+
+    private static string ResultToString(object? result)
+    {
+        if (result == null) return "";
+        if (result is string s) return s;
+        return JsonSerializer.Serialize(result);
     }
 }
