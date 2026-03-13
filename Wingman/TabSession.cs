@@ -22,6 +22,7 @@ internal sealed class TabSession : IDisposable
     public AgentEvents? Events { get; set; }
     public TaskDescriptionService? TaskDescription { get; set; }
     public TitleSpinner? Spinner { get; set; }
+    public SessionTracker? Sessions { get; set; }
 
     public FocusTarget LastFocus { get; set; } = FocusTarget.Input;
 

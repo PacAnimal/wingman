@@ -450,6 +450,10 @@ public partial class MainWindow
         var memory = new MemoryService(_settings);
         var memoryBlock = await memory.FormatForSystemPrompt();
 
+        // separate client — Responses API is stateful per instance; sharing with guard would chain calls
+        var sessions = new SessionTracker(provider.CreateGuardClient(apiKey), _loggerFactory.CreateLogger<SessionTracker>());
+        tab.Sessions = sessions;
+
         var events = new AgentEvents();
         tab.Events = events;
         var approvalUi = new ApprovalUi(tab.ChatPanel, events);
@@ -458,7 +462,7 @@ public partial class MainWindow
 
         IAgentTool[] tools =
         [
-            new RunCommandTool(tab.Terminal, guard, lazyApproval, events),
+            new RunCommandTool(tab.Terminal, guard, lazyApproval, events, sessions),
             new AskUserTool(lazyPanel, events),
             new ReadTerminalTool(tab.ScreenBuffer, events),
             new ListDirectoryTool(events),
@@ -471,7 +475,7 @@ public partial class MainWindow
             new ListMemoryTool(memory, events),
         ];
 
-        var chatService = new ChatService(ChatClientFactory, guardClient, tools, memoryBlock, tab.Terminal, provider.SupportsWebSearch);
+        var chatService = new ChatService(ChatClientFactory, guardClient, tools, memoryBlock, tab.Terminal, sessions, provider.SupportsWebSearch);
         tab.ChatService = chatService;
 
         tab.TaskDescription?.Dispose();

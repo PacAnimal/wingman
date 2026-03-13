@@ -7,7 +7,7 @@ public interface IAgentTool
     AIFunction AsAiFunction();
 }
 
-public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IApprovalUi> approvalUi, AgentEvents events) : IAgentTool
+public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IApprovalUi> approvalUi, AgentEvents events, SessionTracker sessions) : IAgentTool
 {
     public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (string command, string purpose) => ExecuteWithGuard(command, purpose),
@@ -19,19 +19,27 @@ public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IAppro
         events.RaiseToolStarted();
         var result = await guard.EvaluateAsync(command, purpose);
 
+        CommandResult commandResult;
         if (result.Verdict == CommandVerdict.Accepted)
         {
             events.RaiseCommandStarting();
-            return Completed(await terminal.RunCommand(command));
+            commandResult = Completed(await terminal.RunCommand(command));
+        }
+        else
+        {
+            // needs review — show approval card and wait for user decision
+            var approved = await approvalUi.Value.RequestApprovalAsync(command, purpose, result.Reason);
+            if (!approved)
+                return new CommandResult(command, "Command rejected by user", -1, false, "", false, "00:00:00");
+
+            events.RaiseCommandStarting();
+            commandResult = Completed(await terminal.RunCommand(command));
         }
 
-        // needs review — show approval card and wait for user decision
-        var approved = await approvalUi.Value.RequestApprovalAsync(command, purpose, result.Reason);
-        if (!approved)
-            return new CommandResult(command, "Command rejected by user", -1, false, "", false, "00:00:00");
+        if (result.IsAuth)
+            await sessions.ProcessAuthCommandAsync(command, commandResult);
 
-        events.RaiseCommandStarting();
-        return Completed(await terminal.RunCommand(command));
+        return commandResult;
 
         CommandResult Completed(CommandResult r)
         {

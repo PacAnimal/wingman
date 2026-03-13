@@ -18,6 +18,7 @@ public class ChatService : IChatService
     private readonly Func<IChatClient> _clientFactory;
     private readonly IChatClient _guardClient;
     private readonly ITerminal _terminal;
+    private readonly SessionTracker _sessions;
     private readonly ChatOptions _options;
     private readonly SemaphoreSlimValue<List<ChatMessage>> _history = new([], disposeValue: false);
     private IChatClient _client;
@@ -35,11 +36,12 @@ public class ChatService : IChatService
         }
     }
 
-    public ChatService(Func<IChatClient> clientFactory, IChatClient guardClient, IEnumerable<IAgentTool> tools, string memoryBlock, ITerminal terminal, bool supportsWebSearch = true)
+    public ChatService(Func<IChatClient> clientFactory, IChatClient guardClient, IEnumerable<IAgentTool> tools, string memoryBlock, ITerminal terminal, SessionTracker sessions, bool supportsWebSearch = true)
     {
         _clientFactory = clientFactory;
         _guardClient = guardClient;
         _terminal = terminal;
+        _sessions = sessions;
         _client = clientFactory();
         using var init = _history.WaitForDisposable().GetAwaiter().GetResult();
         init.Value.Add(new ChatMessage(ChatRole.System,
@@ -132,7 +134,12 @@ public class ChatService : IChatService
             "- If you discover a saved memory is inaccurate, delete or update it immediately.\n" +
             "- When you have 90+ memories, proactively prune: merge related memories, delete obsolete ones, " +
             "and compress verbose memories into concise facts.\n" +
-            "- Do NOT save conversation-specific context — only durable environment facts and techniques." +
+            "- Do NOT save conversation-specific context — only durable environment facts and techniques.\n\n" +
+            "SESSION AWARENESS:\n" +
+            "- Before each of your turns, you receive an [active sessions] block listing all authenticated sessions in this terminal.\n" +
+            "- ALWAYS check this list before attempting to log in, connect, or authenticate to any service. If a session already exists, DO NOT re-authenticate.\n" +
+            "- If a command fails with an authentication or authorization error, the session may have expired — re-authenticate and retry.\n" +
+            "- Sessions are tracked automatically from both your commands and the user's terminal activity." +
             (memoryBlock.Length == 0 ? "" : "\n\n" + memoryBlock)));
         var toolList = tools.Select(t => t.AsAiFunction()).Cast<AITool>().ToList();
         if (supportsWebSearch) toolList.Add(new HostedWebSearchTool());
@@ -146,12 +153,18 @@ public class ChatService : IChatService
         var userCommands = _terminal.DrainUserCommands();
         string? formattedCommands = null;
         if (userCommands.Count > 0)
+        {
+            await _sessions.ProcessUserCommandsAsync(userCommands);
             formattedCommands = await FormatUserCommandsAsync(userCommands, cancellationToken);
+        }
 
         using (var h = await _history.WaitForDisposable(cancellationToken))
         {
             if (formattedCommands != null)
                 h.Value.Add(new ChatMessage(ChatRole.System, formattedCommands));
+            var sessionContext = _sessions.FormatForContext();
+            if (sessionContext != null)
+                h.Value.Add(new ChatMessage(ChatRole.System, sessionContext));
             h.Value.Add(new ChatMessage(ChatRole.User, userMessage));
         }
 
@@ -198,6 +211,7 @@ public class ChatService : IChatService
         }
         _cachedSummary = null;
         _summarizedUpToIndex = 0;
+        _sessions.Clear();
         // fresh client breaks the Responses API response chain (server-side state)
         _client = _clientFactory();
     }

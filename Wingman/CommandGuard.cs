@@ -6,7 +6,7 @@ namespace Wingman;
 
 public enum CommandVerdict { Accepted, NeedsReview }
 
-public record GuardResult(CommandVerdict Verdict, string Reason);
+public record GuardResult(CommandVerdict Verdict, string Reason, bool IsAuth);
 
 public interface ICommandGuard
 {
@@ -42,7 +42,8 @@ public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : IC
         If a command only affects the current shell session and leaves the machine and external services unchanged, accept it.
         If in doubt about whether real external or filesystem changes occur, flag for review.
 
-        Respond ONLY with JSON: {"accept": true/false, "reason": "brief explanation"}
+        Respond ONLY with JSON: {"accept": true/false, "reason": "brief explanation", "isAuth": true/false}
+        Set isAuth to true if the command is an authentication, login, logout, connect, or disconnect command.
         """;
 
     // strips markdown fences and any preamble — returns the first {...} block found
@@ -76,8 +77,9 @@ public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : IC
                 using var doc = JsonDocument.Parse(json);
                 var accept = doc.RootElement.GetProperty("accept").GetBoolean();
                 var reason = doc.RootElement.GetProperty("reason").GetString() ?? "";
+                var isAuth = doc.RootElement.TryGetProperty("isAuth", out var authProp) && authProp.GetBoolean();
 
-                return new GuardResult(accept ? CommandVerdict.Accepted : CommandVerdict.NeedsReview, reason);
+                return new GuardResult(accept ? CommandVerdict.Accepted : CommandVerdict.NeedsReview, reason, isAuth);
             }
             catch (Exception ex)
             {
@@ -88,6 +90,6 @@ public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : IC
             }
         }
 
-        return new GuardResult(CommandVerdict.NeedsReview, "Guard unavailable — manual review required");
+        return new GuardResult(CommandVerdict.NeedsReview, "Guard unavailable — manual review required", false);
     }
 }
