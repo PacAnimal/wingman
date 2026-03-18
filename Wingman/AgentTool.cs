@@ -37,7 +37,7 @@ public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IAppro
         }
 
         if (result.IsAuth)
-            await sessions.ProcessAuthCommandAsync(command, commandResult);
+            _ = sessions.ProcessAuthCommandAsync(command, commandResult);
 
         return commandResult;
 

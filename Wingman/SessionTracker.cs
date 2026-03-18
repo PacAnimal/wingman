@@ -9,7 +9,7 @@ public record AuthSession(string Service, string Identity, DateTime EstablishedU
 
 public class SessionTracker(IChatClient guardClient, ILogger<SessionTracker> logger)
 {
-    private const int ExtractionTimeoutMs = 10_000;
+    private const int ExtractionTimeoutMs = 30_000;
     private const int MaxOutputCharsForExtraction = 2_000;
     private const int MaxOutputCharsPerBatchCmd = 500;
 
