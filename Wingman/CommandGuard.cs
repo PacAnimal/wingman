@@ -13,38 +13,47 @@ public interface ICommandGuard
     Task<GuardResult> EvaluateAsync(string command, string purpose, CancellationToken ct = default);
 }
 
-public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : ICommandGuard
+public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger, string scratchDir = "") : ICommandGuard
 {
-    private const string SystemPrompt =
-        """
-        You are an expert PowerShell user and security watchdog for a PowerShell terminal. Your job is to protect the user from unintended changes to their machine or external services.
+    private readonly string _systemPrompt = BuildSystemPrompt(scratchDir);
 
-        The key distinction: SESSION STATE is fine; SYSTEM/EXTERNAL STATE is not.
+    private static string BuildSystemPrompt(string scratchDir)
+    {
+        var scratchLine = string.IsNullOrEmpty(scratchDir)
+            ? "- Scratch directory: any read, write, or delete targeting $WMTMP or a path under $WMTMP — these are safe per-session temp ops"
+            : $"- Scratch directory: any read, write, or delete targeting $WMTMP ({scratchDir}) or any path under it — these are safe per-session temp ops";
 
-        Session state (safe — do NOT flag these):
-        - Authentication: Connect-*, Login-*, Disconnect-*, az login, az logout — these only establish or clear a local session credential; they do not create, modify, or delete anything on the machine or in the cloud
-        - Shell context: cd, Set-Location, Push-Location, Pop-Location, Set-AzContext, Select-AzSubscription — change where you're pointing, nothing else
-        - Loaded modules: Import-Module, Remove-Module — in-process only
-        - Pure queries: Get-*, ls, dir, cat, type, echo, whoami, hostname, pwd, az account show, az account list, etc.
-        - Status checks: git status, git log, git diff, git branch
-        - Build/test: dotnet build, dotnet test, dotnet run
-        - Environment inspection: $env:*, [System.Environment]::GetEnvironmentVariable
-        - Scratch directory: any read, write, or delete targeting $WMTMP or a path under $WMTMP — these are safe per-session temp ops
+        return
+            $$"""
+            You are an expert PowerShell user and security watchdog for a PowerShell terminal. Your job is to protect the user from unintended changes to their machine or external services.
 
-        Flag for review (respond with accept: false):
-        - Filesystem changes: Remove-Item, rm, del, mkdir, cp, mv, New-Item, Rename-Item, Write-*, Set-Content, Out-File, etc.
-        - Cloud resource mutations: New-Az*, Remove-Az*, Set-Az* (that target resources, not context), az group create/delete, az vm start/stop, etc.
-        - Git writes: git commit, git push, git pull, git merge, git rebase, git reset
-        - Package/software installs or removes: winget, choco, pip install, npm install, dotnet publish
-        - System config: registry writes, permission changes, service Start-*/Stop-*/Restart-*, scheduled tasks
-        - Redirecting output to files (>, >>)
+            The key distinction: SESSION STATE is fine; SYSTEM/EXTERNAL STATE is not.
 
-        If a command only affects the current shell session and leaves the machine and external services unchanged, accept it.
-        If in doubt about whether real external or filesystem changes occur, flag for review.
+            Session state (safe — do NOT flag these):
+            - Authentication: Connect-*, Login-*, Disconnect-*, az login, az logout — these only establish or clear a local session credential; they do not create, modify, or delete anything on the machine or in the cloud
+            - Shell context: cd, Set-Location, Push-Location, Pop-Location, Set-AzContext, Select-AzSubscription — change where you're pointing, nothing else
+            - Loaded modules: Import-Module, Remove-Module — in-process only
+            - Pure queries: Get-*, ls, dir, cat, type, echo, whoami, hostname, pwd, az account show, az account list, etc.
+            - Status checks: git status, git log, git diff, git branch
+            - Build/test: dotnet build, dotnet test, dotnet run
+            - Environment inspection: $env:*, [System.Environment]::GetEnvironmentVariable
+            {{scratchLine}}
 
-        Respond ONLY with JSON: {"accept": true/false, "reason": "brief explanation", "isAuth": true/false}
-        Set isAuth to true if the command is an authentication, login, logout, connect, or disconnect command.
-        """;
+            Flag for review (respond with accept: false):
+            - Filesystem changes: Remove-Item, rm, del, mkdir, cp, mv, New-Item, Rename-Item, Write-*, Set-Content, Out-File, etc.
+            - Cloud resource mutations: New-Az*, Remove-Az*, Set-Az* (that target resources, not context), az group create/delete, az vm start/stop, etc.
+            - Git writes: git commit, git push, git pull, git merge, git rebase, git reset
+            - Package/software installs or removes: winget, choco, pip install, npm install, dotnet publish
+            - System config: registry writes, permission changes, service Start-*/Stop-*/Restart-*, scheduled tasks
+            - Redirecting output to files (>, >>)
+
+            If a command only affects the current shell session and leaves the machine and external services unchanged, accept it.
+            If in doubt about whether real external or filesystem changes occur, flag for review.
+
+            Respond ONLY with JSON: {"accept": true/false, "reason": "brief explanation", "isAuth": true/false}
+            Set isAuth to true if the command is an authentication, login, logout, connect, or disconnect command.
+            """;
+    }
 
     // strips markdown fences and any preamble — returns the first {...} block found
     private static string ExtractJson(string text)
@@ -58,7 +67,7 @@ public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : IC
     {
         var messages = new List<ChatMessage>
         {
-            new(ChatRole.System, SystemPrompt),
+            new(ChatRole.System, _systemPrompt),
             new(ChatRole.User, $"Command: {command}\nPurpose: {purpose}")
         };
         var options = new ChatOptions { MaxOutputTokens = 1000 };
@@ -84,7 +93,10 @@ public class CommandGuard(IChatClient client, ILogger<CommandGuard> logger) : IC
             catch (Exception ex)
             {
                 if (attempt < 3)
+                {
                     logger.LogWarning(ex, "Guard evaluation attempt {Attempt} failed, retrying", attempt);
+                    await Task.Delay(attempt * 1000, ct); // 1s, 2s backoff
+                }
                 else
                     logger.LogWarning(ex, "Guard evaluation failed after 3 attempts, defaulting to NeedsReview");
             }

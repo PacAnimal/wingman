@@ -6,6 +6,8 @@ namespace Wingman;
 
 public class ListDirectoryTool(AgentEvents events) : IAgentTool
 {
+    private const int MaxEntries = 200;
+
     public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (string path) => ListDirectory(path),
         "list_directory",
@@ -21,19 +23,29 @@ public class ListDirectoryTool(AgentEvents events) : IAgentTool
                 return $"Error: directory not found: {path}";
 
             var entries = dir.GetFileSystemInfos();
-            var dirs = entries.OfType<DirectoryInfo>().OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase);
-            var files = entries.OfType<FileInfo>().OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase);
+            var allEntries = entries.OfType<DirectoryInfo>().OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase).Cast<FileSystemInfo>()
+                .Concat(entries.OfType<FileInfo>().OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+
+            var capped = allEntries.Count > MaxEntries;
+            var visible = capped ? allEntries.Take(MaxEntries) : allEntries;
 
             var sb = new StringBuilder();
-            foreach (var d in dirs)
-                sb.AppendLine($"[DIR]  {d.Name}");
-            foreach (var f in files)
+            foreach (var entry in visible)
             {
-                var mime = SafeDetect(f.FullName);
-                sb.AppendLine($"[FILE] {f.Name} ({mime}, {FormatSize(f.Length)})");
+                if (entry is DirectoryInfo)
+                    sb.AppendLine($"[DIR]  {entry.Name}");
+                else if (entry is FileInfo fi)
+                {
+                    var mime = SafeDetect(fi.FullName);
+                    sb.AppendLine($"[FILE] {fi.Name} ({mime}, {FormatSize(fi.Length)})");
+                }
             }
 
-            events.RaiseToolResult($"[tool] listed {path} — {entries.Length} entries");
+            if (capped)
+                sb.AppendLine($"\n[Showing {MaxEntries} of {allEntries.Count} entries. Use run_command with Get-ChildItem for filtered results.]");
+
+            events.RaiseToolResult($"[tool] listed {path} — {allEntries.Count} entries");
             return sb.Length == 0 ? "(empty directory)" : sb.ToString().TrimEnd();
         }
         catch (UnauthorizedAccessException)

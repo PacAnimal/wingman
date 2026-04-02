@@ -37,12 +37,23 @@ public class EditFileTool(ITerminal terminal, Lazy<IApprovalUi> approvalUi, Agen
             if (!File.Exists(path))
                 return $"Error: file not found: {path}";
 
+            try
+            {
+                var mime = MimeDetector.Detect(path);
+                if (!mime.IsText)
+                    return $"Error: {path} is a binary file ({mime.MimeType}). edit_file only supports text files.";
+            }
+            catch { /* detection failed — proceed */ }
+
             var lines = new List<string>(await File.ReadAllLinesAsync(path));
             var total = lines.Count;
 
-            // clamp to valid range; line can equal total+1 to append at end
-            var idx = Math.Clamp(line - 1, 0, total);
-            var remove = Math.Clamp(replaceLines, 0, total - idx);
+            var idx = line - 1;
+            if (idx < 0 || idx > total)
+                return $"Error: line {line} is out of range. File has {total} lines (valid range: 1-{total + 1}).";
+            var remove = Math.Min(replaceLines, total - idx);
+            if (remove < replaceLines)
+                return $"Error: cannot replace {replaceLines} lines starting at line {line} — only {total - idx} lines remain.";
 
             lines.RemoveRange(idx, remove);
             if (replaceWith.Length > 0)

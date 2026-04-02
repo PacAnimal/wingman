@@ -82,11 +82,11 @@ public partial class App
 
         await _host.StartAsync();
 
-        // if key is valid, wire up AI immediately via ActivateAi
+        // show window first — terminal control needs its Loaded event before ConPTY can initialize
         var window = _host.Services.GetRequiredService<MainWindow>();
+        window.Show();
         if (!string.IsNullOrEmpty(apiKey))
             await window.ActivateAi(apiKey);
-        window.Show();
     }
 
     protected override async void OnExit(ExitEventArgs e)

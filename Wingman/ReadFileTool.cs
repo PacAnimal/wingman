@@ -11,7 +11,8 @@ public class ReadFileTool(Lazy<IApprovalUi> approvalUi, AgentEvents events) : IA
     public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (string path, int offset, int limit) => ReadFileAsync(path, offset, limit),
         "read_file",
-        "Reads a text file and returns its contents with line numbers. Use offset and limit to page through large files. " +
+        "Reads a text file and returns its contents with line numbers. Hard limit of 500 lines per call — " +
+        "use offset and limit to page through larger files. " +
         "Only works on text files; binary files (images, archives, executables) are refused with an error. " +
         "Much faster than run_command for reading files. Sensitive paths (credentials, keys, etc.) require user approval.");
 

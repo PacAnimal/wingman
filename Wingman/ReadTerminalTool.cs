@@ -14,6 +14,9 @@ public class ReadTerminalTool(IScreenBuffer screenBuffer, AgentEvents events) : 
     private string ReadTerminal()
     {
         events.RaiseToolStarted();
-        return screenBuffer.GetVisibleText();
+        var text = screenBuffer.GetVisibleText();
+        var lines = text.Length == 0 ? 0 : text.Split('\n').Length;
+        events.RaiseToolResult($"[tool] read terminal — {lines} visible lines");
+        return text;
     }
 }

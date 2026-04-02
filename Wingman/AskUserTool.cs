@@ -10,7 +10,7 @@ public class AskUserTool(Lazy<ChatPanel> chatPanel, AgentEvents events) : IAgent
     public AIFunction AsAiFunction() => AIFunctionFactory.Create(
         (string question, string[] options) => AskAsync(question, options),
         "ask_user",
-        "Presents a numbered multiple-choice question to the user and waits for a single keypress to select an option. " +
+        "Presents a numbered multiple-choice question to the user and waits for a single keypress to select an option (1-9 options max). " +
         "Use when multiple equally valid approaches exist or when offering installation of a missing tool.");
 
     private Task<string> AskAsync(string question, string[] options)

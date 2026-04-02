@@ -15,19 +15,22 @@ public class WriteFileTool(ITerminal terminal, Lazy<IApprovalUi> approvalUi, Age
     {
         events.RaiseToolActivity("Write " + path);
 
-        // scratch dir writes need no approval
-        var needsApproval = !path.StartsWith(terminal.ScratchDir, StringComparison.OrdinalIgnoreCase);
+        var (sensitive, reason) = ReadFileTool.IsSensitivePath(path);
+        var needsApproval = sensitive || !path.StartsWith(terminal.ScratchDir, StringComparison.OrdinalIgnoreCase);
 
         if (needsApproval)
         {
-            var approved = await approvalUi.Value.RequestApprovalAsync(path, "Write file", "Writing outside scratch directory");
+            var approvalReason = sensitive ? reason : "Writing outside scratch directory";
+            var approved = await approvalUi.Value.RequestApprovalAsync(path, "Write file", approvalReason);
             if (!approved)
                 return "File write rejected by user.";
         }
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(path) ?? path);
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir))
+                Directory.CreateDirectory(dir);
             await File.WriteAllTextAsync(path, content);
             events.RaiseToolResult($"[tool] wrote {content.Length} chars to {path}");
             return $"Written {content.Length} characters to {path}";

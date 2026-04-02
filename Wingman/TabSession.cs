@@ -24,7 +24,14 @@ internal sealed class TabSession : IDisposable
     public TitleSpinner? Spinner { get; set; }
     public SessionTracker? Sessions { get; set; }
 
+    public string PsVersion { get; set; } = "unknown";
     public FocusTarget LastFocus { get; set; } = FocusTarget.Input;
+
+    // tracked so ActivateAi can detach them before re-attaching on provider switch
+    internal Action? OnUserCommandDetected;
+    internal Action? OnMessageSent;
+    internal Action? OnCommandCompleted;
+    internal Action? OnUserTyping;
 
     private bool _disposed;
 

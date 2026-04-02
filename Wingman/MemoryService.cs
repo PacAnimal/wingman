@@ -79,7 +79,7 @@ public class MemoryService(ISettingsService settings) : IMemoryService
         if (memories.Count == 0)
             return string.Empty;
 
-        var sb = new StringBuilder("YOUR MEMORIES (facts saved from previous sessions):\n");
+        var sb = new StringBuilder("YOUR SAVED MEMORIES — use these instead of re-running discovery commands:\n");
         for (var i = 0; i < memories.Count; i++)
             sb.AppendLine($"{i + 1}. {memories[i]}");
         return sb.ToString().TrimEnd();

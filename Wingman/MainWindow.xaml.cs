@@ -25,6 +25,7 @@ public partial class MainWindow
     private readonly HashSet<Guid> _highlightedTabs = [];
     private int _spareGeneration;
     private bool _firstTabReady;
+    private readonly Task _firstTabReadyTask;
     private FocusTarget _focusBeforeCard;
     private AiProviderKind? _pendingProviderConstraint;
     private string? _startupError;
@@ -94,7 +95,7 @@ public partial class MainWindow
         TabBar.AddTab(firstTab.Id, firstTab.Title);
         ContentGrid.Children.Add(firstTab.ChatPanel);
         ContentGrid.Children.Add(firstTab.TerminalBorder);
-        _ = InitTabTerminal(firstTab);
+        _firstTabReadyTask = InitTabTerminal(firstTab);
         _activeTab = firstTab;
         TabBar.SetActiveTab(firstTab.Id);
     }
@@ -104,6 +105,10 @@ public partial class MainWindow
         await tab.Terminal.Init(tab.TerminalControl);
         if (!tab.TerminalControl.IsKeyboardFocusWithin)
             tab.TerminalControl.IsCursorVisible = false;
+
+        var versionResult = await tab.Terminal.RunCommand("$PSVersionTable.PSVersion.ToString()");
+        var psVersion = versionResult.Output.Trim();
+        tab.PsVersion = string.IsNullOrEmpty(psVersion) ? "unknown" : psVersion;
 
         _ = tab.Terminal.RunCommand("clear; Write-Host \"`nWingman ready!`n\" -ForegroundColor Green");
 
@@ -151,6 +156,10 @@ public partial class MainWindow
             if (!tab.TerminalControl.IsKeyboardFocusWithin)
                 tab.TerminalControl.IsCursorVisible = false;
 
+            var versionResult = await tab.Terminal.RunCommand("$PSVersionTable.PSVersion.ToString()");
+            var psVersion = versionResult.Output.Trim();
+            tab.PsVersion = string.IsNullOrEmpty(psVersion) ? "unknown" : psVersion;
+
             var stored = await _settings.LoadAsync();
             var apiKey = stored.EffectiveApiKey;
             if (!string.IsNullOrEmpty(apiKey))
@@ -195,6 +204,10 @@ public partial class MainWindow
                 tab.TerminalControl.Theme = _terminalTheme;
             if (!tab.TerminalControl.IsKeyboardFocusWithin)
                 tab.TerminalControl.IsCursorVisible = false;
+
+            var versionResult = await tab.Terminal.RunCommand("$PSVersionTable.PSVersion.ToString()");
+            var psVersion = versionResult.Output.Trim();
+            tab.PsVersion = string.IsNullOrEmpty(psVersion) ? "unknown" : psVersion;
 
             var stored = await _settings.LoadAsync();
             if (_spareGeneration != gen) return;
@@ -429,6 +442,7 @@ public partial class MainWindow
 
     internal async Task ActivateAi(string apiKey)
     {
+        await _firstTabReadyTask; // ensure terminal is initialized before accessing ScratchDir
         _startupError = null;
         DisposeSpares();
         foreach (var tab in _tabs)
@@ -440,15 +454,24 @@ public partial class MainWindow
         }
     }
 
+    private static string BuildEnvironmentBlock(string scratchDir, string psVersion) =>
+        "ENVIRONMENT:\n" +
+        $"- Machine: {Environment.MachineName} ({Environment.OSVersion})\n" +
+        $"- User: {Environment.UserName}\n" +
+        $"- PowerShell: {psVersion}\n" +
+        $"- Scratch directory: {scratchDir}\n" +
+        $"- Session started: {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC";
+
     private async Task ActivateAi(string apiKey, TabSession tab)
     {
         var provider = AiProvider.Detect(apiKey);
 
+        var scratchDir = tab.Terminal.ScratchDir;
         var guardClient = provider.CreateGuardClient(apiKey);
-        var guard = new CommandGuard(guardClient, _loggerFactory.CreateLogger<CommandGuard>());
+        var guard = new CommandGuard(guardClient, _loggerFactory.CreateLogger<CommandGuard>(), scratchDir);
 
         var memory = new MemoryService(_settings);
-        var memoryBlock = await memory.FormatForSystemPrompt();
+        var environmentBlock = BuildEnvironmentBlock(scratchDir, tab.PsVersion);
 
         // separate client — Responses API is stateful per instance; sharing with guard would chain calls
         var sessions = new SessionTracker(provider.CreateGuardClient(apiKey), _loggerFactory.CreateLogger<SessionTracker>());
@@ -475,14 +498,22 @@ public partial class MainWindow
             new ListMemoryTool(memory, events),
         ];
 
-        var chatService = new ChatService(ChatClientFactory, guardClient, tools, memoryBlock, tab.Terminal, sessions, provider.SupportsWebSearch);
+        var chatService = new ChatService(ChatClientFactory, guardClient, tools, environmentBlock, memory, tab.Terminal, sessions, _loggerFactory.CreateLogger<ChatService>(), provider.SupportsWebSearch);
         tab.ChatService = chatService;
 
         tab.TaskDescription?.Dispose();
         tab.TaskDescription = new TaskDescriptionService();
         tab.TaskDescription.Start(guardClient, chatService, tab.ScreenBuffer);
-        tab.Terminal.UserCommandDetected += () => tab.TaskDescription?.SignalFirstCommand();
-        tab.ChatPanel.MessageSent += () => tab.TaskDescription?.SignalFirstCommand();
+
+        // detach old handlers before re-attaching to prevent accumulation on provider switch
+        if (tab.OnUserCommandDetected != null) tab.Terminal.UserCommandDetected -= tab.OnUserCommandDetected;
+        if (tab.OnMessageSent != null) tab.ChatPanel.MessageSent -= tab.OnMessageSent;
+        if (tab.OnCommandCompleted != null) tab.Terminal.CommandCompleted -= tab.OnCommandCompleted;
+
+        tab.OnUserCommandDetected = () => tab.TaskDescription?.SignalFirstCommand();
+        tab.OnMessageSent = () => tab.TaskDescription?.SignalFirstCommand();
+        tab.Terminal.UserCommandDetected += tab.OnUserCommandDetected;
+        tab.ChatPanel.MessageSent += tab.OnMessageSent;
 
         events.ThinkingStarted += () => Dispatcher.BeginInvoke(() => tab.Spinner!.StartThinking());
         events.ThinkingStopped += () => Dispatcher.BeginInvoke(() =>
@@ -515,13 +546,14 @@ public partial class MainWindow
             if (tab.ChatPanel.IsStreaming) tab.Spinner!.StartThinking();
         });
 
-        tab.Terminal.CommandCompleted += () => Dispatcher.BeginInvoke(() =>
+        tab.OnCommandCompleted = () => Dispatcher.BeginInvoke(() =>
         {
             if (tab.ChatPanel.IsStreaming)
                 tab.Spinner?.StartThinking();
             else
                 tab.Spinner?.Stop();
         });
+        tab.Terminal.CommandCompleted += tab.OnCommandCompleted;
 
         tab.TaskDescription.TaskChanged += task =>
         {
@@ -536,7 +568,9 @@ public partial class MainWindow
                 });
             }
         };
-        tab.ChatPanel.UserTyping += () => tab.TaskDescription?.OnUserTyping();
+        if (tab.OnUserTyping != null) tab.ChatPanel.UserTyping -= tab.OnUserTyping;
+        tab.OnUserTyping = () => tab.TaskDescription?.OnUserTyping();
+        tab.ChatPanel.UserTyping += tab.OnUserTyping;
 
         tab.ChatPanel.Initialize(chatService, events, memory: memory);
         if (tab == _activeTab)

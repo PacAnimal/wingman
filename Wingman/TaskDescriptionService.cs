@@ -6,6 +6,8 @@ namespace Wingman;
 
 sealed class TaskDescriptionService : IDisposable
 {
+    private static readonly ChatOptions TitleOptions = new() { Temperature = 0f, MaxOutputTokens = 50 };
+
     private IChatClient? _client;
     private IChatService? _chat;
     private IScreenBuffer? _screen;
@@ -45,6 +47,7 @@ sealed class TaskDescriptionService : IDisposable
     {
         _typingTimer.Stop();
         _firstCommandCts?.Cancel();
+        _firstCommandCts?.Dispose();
         _firstCommandTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _firstCommandCts = new CancellationTokenSource();
         _ = WaitForFirstCommandAsync(_firstCommandCts.Token);
@@ -70,9 +73,10 @@ sealed class TaskDescriptionService : IDisposable
         if (_client == null || _chat == null || _screen == null) return;
         try
         {
-            // last ~10 messages (skip system prompt), truncate each to 500 chars
+            // last ~10 messages (skip system prompt + per-turn injections), truncate each to 500 chars
             var history = _chat.History
                 .Skip(1)
+                .Where(m => !ChatService.IsPerTurnMessage(m))
                 .TakeLast(10)
                 .Select(m =>
                 {
@@ -93,7 +97,7 @@ sealed class TaskDescriptionService : IDisposable
             sb.AppendLine(terminal);
 
             var messages = new List<ChatMessage> { new(ChatRole.User, sb.ToString()) };
-            var response = await _client.GetResponseAsync(messages);
+            var response = await _client.GetResponseAsync(messages, TitleOptions);
             var task = response.Text.Trim().ToLowerInvariant();
             if (!string.IsNullOrWhiteSpace(task))
             {
@@ -113,5 +117,6 @@ sealed class TaskDescriptionService : IDisposable
         _disposed = true;
         _typingTimer.Stop();
         _firstCommandCts?.Cancel();
+        _firstCommandCts?.Dispose();
     }
 }

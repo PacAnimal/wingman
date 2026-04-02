@@ -248,14 +248,13 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
                                    """);
 
                     // drain init sentinels - prompt fires twice during init, 4 sentinels each
-                    await WaitForSentinel(8);
+                    await WaitForSentinel(8, ct: _resetCts!.Token);
 
                     if (_generation != gen) { initComplete.TrySetCanceled(); return; }
                     // skip init output — user commands start from here
                     using (var buf = await _outputBuffer.WaitForDisposable())
                         _userCommandOffset = buf.Value.Length;
 
-                    _resetCts = new CancellationTokenSource();
                     initComplete.TrySetResult();
                 }
                 catch (Exception ex)
@@ -265,13 +264,18 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
             });
         };
 
+        _resetCts = new CancellationTokenSource();
         _ = Task.Run(() => conPty.Start("pwsh.exe -NoProfile", cols, rows, factory: new DetachedProcessFactory()));
-
-        await initComplete.Task;
-
-        // let commands run
-        _commandLock.Release();
-        _initDone = true;
+        try
+        {
+            await initComplete.Task;
+            _initDone = true;
+        }
+        finally
+        {
+            // always release so RunCommand / Reset never deadlock on init failure or cancellation
+            _commandLock.Release();
+        }
     }
 
     public async Task<CommandResult> RunCommand(string command)
@@ -435,12 +439,13 @@ public class Terminal(ILogger<Terminal> log, IScreenBuffer screenBuffer) : ITerm
         return "";
     }
 
-    private async Task WaitForSentinel(int count = 1, int timeoutMs = 30000)
+    private async Task WaitForSentinel(int count = 1, int timeoutMs = 30000, CancellationToken ct = default)
     {
         for (var i = count; i > 0; i--)
         {
             using var cts = new CancellationTokenSource(timeoutMs);
-            await _sentinels.Reader.ReadAsync(cts.Token);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, ct);
+            await _sentinels.Reader.ReadAsync(linked.Token);
         }
     }
 

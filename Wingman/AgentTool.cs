@@ -23,7 +23,7 @@ public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IAppro
         if (result.Verdict == CommandVerdict.Accepted)
         {
             events.RaiseCommandStarting();
-            commandResult = Completed(await terminal.RunCommand(command));
+            commandResult = Completed(await RunWithTimeout(command));
         }
         else
         {
@@ -33,11 +33,11 @@ public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IAppro
                 return new CommandResult(command, "Command rejected by user", -1, false, "", false, "00:00:00");
 
             events.RaiseCommandStarting();
-            commandResult = Completed(await terminal.RunCommand(command));
+            commandResult = Completed(await RunWithTimeout(command));
         }
 
         if (result.IsAuth)
-            _ = sessions.ProcessAuthCommandAsync(command, commandResult);
+            await sessions.ProcessAuthCommandAsync(command, commandResult);
 
         return commandResult;
 
@@ -46,6 +46,22 @@ public class RunCommandTool(ITerminal terminal, ICommandGuard guard, Lazy<IAppro
             var lines = r.Output.Length == 0 ? 0 : r.Output.Split('\n').Length;
             events.RaiseToolResult($"[tool] ran '{command}' — exit {r.ExitCode}, {lines} output lines, {r.Duration}");
             return r;
+        }
+    }
+
+    private async Task<CommandResult> RunWithTimeout(string command)
+    {
+        try
+        {
+            return await terminal.RunCommand(command);
+        }
+        catch (OperationCanceledException)
+        {
+            events.RaiseToolResult($"[tool] '{command}' timed out");
+            var timeout = TimeSpan.FromMilliseconds(Constants.CommandTimeoutMs);
+            return new CommandResult(command,
+                $"Command timed out after {timeout.TotalMinutes:0} minutes. It may still be running — use read_terminal to check.",
+                -1, false, "", false, timeout.ToString(@"hh\:mm\:ss"));
         }
     }
 }

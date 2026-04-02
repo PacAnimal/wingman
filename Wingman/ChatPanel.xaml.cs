@@ -160,6 +160,7 @@ public partial class ChatPanel
 
     public void Initialize(IChatService? chatService, AgentEvents? agentEvents, string? errorMessage = null, Func<string, Task<string?>>? onApiKeySubmitted = null, IMemoryService? memory = null)
     {
+        CancelStreaming();
         _chatService = chatService;
         _memory = memory;
         _onApiKeySubmitted = onApiKeySubmitted;
@@ -182,12 +183,23 @@ public partial class ChatPanel
 
         if (chatService == null)
         {
-            OverlayMessage.Text = errorMessage ?? string.Empty;
-            ApiKeyBox.Text = string.Empty;
-            ApiKeyBox.IsEnabled = true;
-            OverlayStatus.Text = "Press Enter to submit";
             DisabledOverlay.Visibility = Visibility.Visible;
-            ApiKeyBox.Focus();
+            if (errorMessage == null)
+            {
+                // loading state — don't show key field until we know it's needed
+                KeyEntryPanel.Visibility = Visibility.Collapsed;
+                LoadingText.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                LoadingText.Visibility = Visibility.Collapsed;
+                KeyEntryPanel.Visibility = Visibility.Visible;
+                OverlayMessage.Text = errorMessage;
+                ApiKeyBox.Text = string.Empty;
+                ApiKeyBox.IsEnabled = true;
+                OverlayStatus.Text = "Press Enter to submit";
+                ApiKeyBox.Focus();
+            }
         }
         else
         {
@@ -311,6 +323,7 @@ public partial class ChatPanel
             CancelStreaming();
             _chatService?.ClearHistory();
             MessagesPanel.Children.Clear();
+            while (_pendingActivities.TryDequeue(out _)) { } // drain stale activities
             if (ResetRequested != null)
                 await ResetRequested.Invoke();
             return true;
@@ -390,7 +403,10 @@ public partial class ChatPanel
     public void FocusPrimaryInput()
     {
         if (DisabledOverlay.Visibility == Visibility.Visible)
-            ApiKeyBox.Focus();
+        {
+            if (KeyEntryPanel.Visibility == Visibility.Visible)
+                ApiKeyBox.Focus();
+        }
         else
             InputBox.Focus();
     }
@@ -663,6 +679,7 @@ public partial class ChatPanel
             var errorDoc = new FlowDocument();
             errorDoc.Blocks.Add(new Paragraph(new Run($"[Error: {ex.Message}]")) { Foreground = Brushes.IndianRed });
             _currentRichBubble?.Document = errorDoc;
+            _chatService?.InjectErrorMessage($"[Previous response failed: {ex.Message}]");
         }
         finally
         {
@@ -672,6 +689,31 @@ public partial class ChatPanel
             _typing = null;
             _streamingCts?.Dispose();
             _streamingCts = null;
+            // clear any unresolved card — prevents orphaned bubbles if stream ends while card is active
+            if (_pendingApproval != null)
+            {
+                var cb = _pendingApprovalCallback;
+                _pendingApproval.TrySetResult(false);
+                _pendingApproval = null;
+                _pendingApprovalCallback = null;
+                cb?.Invoke(false);
+            }
+            if (_pendingChoice != null)
+            {
+                var cb = _pendingChoiceCallback;
+                _pendingChoice.TrySetResult(null);
+                _pendingChoice = null;
+                _pendingChoiceCallback = null;
+                _pendingChoiceOptions = null;
+                cb?.Invoke(null);
+            }
+            if (_activeCard != null)
+            {
+                _activeCard = null;
+                InputBox.CaretBrush = _savedCaretBrush;
+                _savedCaretBrush = null;
+                CardActiveChanged?.Invoke(false);
+            }
             _agentEvents?.RaiseThinkingStopped();
             _isStreaming = false;
         }
