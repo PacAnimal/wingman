@@ -35,7 +35,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="Cathedral" Version="0.0.421" />
+      <PackageReference Include="Cathedral" Version="0.0.422" />
       <PackageReference Include="Markdig" Version="1.1.2" />
       <PackageReference Include="Mime" Version="3.8.0" />
       <PackageReference Include="Microsoft.Extensions.AI" Version="10.4.1" />
