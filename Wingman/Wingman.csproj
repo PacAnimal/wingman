@@ -35,13 +35,13 @@
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="Cathedral" Version="0.0.422" />
-      <PackageReference Include="Markdig" Version="1.1.2" />
+      <PackageReference Include="Cathedral" Version="0.0.428" />
+      <PackageReference Include="Markdig" Version="1.1.3" />
       <PackageReference Include="Mime" Version="3.8.0" />
-      <PackageReference Include="Microsoft.Extensions.AI" Version="10.4.1" />
-      <PackageReference Include="Anthropic" Version="12.9.0" />
-      <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.4.1" />
-      <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
+      <PackageReference Include="Microsoft.Extensions.AI" Version="10.5.0" />
+      <PackageReference Include="Anthropic" Version="12.17.0" />
+      <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.0" />
+      <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.7" />
       <!-- GeneratePathProperty gives us $(PkgCI_Microsoft_Windows_Console_ConPTY) for manual import below.
            The package's .targets file is misnamed (missing the CI. prefix) so NuGet never auto-imports it. -->
       <PackageReference Include="CI.Microsoft.Windows.Console.ConPTY" Version="1.22.250314001" GeneratePathProperty="true" />
